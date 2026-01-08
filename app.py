@@ -4,19 +4,18 @@ import pdfplumber
 import re
 import math
 
-st.set_page_config(page_title="Hako-Toro : Optimisation Finale", layout="wide")
-st.title("🚚 Calculateur de Chargement Intelligent")
+st.set_page_config(page_title="Hako-Toro : Correctif Quantité", layout="wide")
+st.title("🚚 Calculateur de Chargement (Précision Quantités)")
 
-# --- CONFIGURATION ---
-st.sidebar.header("1. Paramètres Camion")
-# Valeurs transmises : Longueur 2.60m, Largeur 2.46m
+# --- PARAMÈTRES FIXES ---
 L_CAMION = 2600 
 l_CAMION = 2460
-H_CAMION = st.sidebar.number_input("Hauteur utile du camion (mm)", value=2600)
+H_CAMION = 2600 # Hauteur standard
 
-uploaded_excel = st.sidebar.file_uploader("Charger la base Excel (Palettes)", type=None)
+st.sidebar.header("1. Configuration")
+uploaded_excel = st.sidebar.file_uploader("Charger la base Excel", type=None)
 
-st.subheader("2. Documents à analyser")
+st.subheader("2. Documents")
 uploaded_pdfs = st.file_uploader("Glissez vos PDF ici", type="pdf", accept_multiple_files=True)
 
 if uploaded_excel and uploaded_pdfs:
@@ -24,54 +23,59 @@ if uploaded_excel and uploaded_pdfs:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         st.sidebar.success("✅ Base articles connectée")
         
-        if st.button("🚀 LANCER LE CALCUL"):
+        if st.button("🚀 RELANCER LE CALCUL PRÉCIS"):
             total_mm_lineaire = 0
             details = []
 
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
-                    texte = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-                    lignes = texte.split('\n')
-
-                    for ligne in lignes:
-                        for _, row in df_articles.iterrows():
-                            refs = [r.strip() for r in str(row['Référence']).split('/')]
-                            l_art = float(row['Longueur (mm)'])
-                            h_art = float(row.get('Hauteur (mm)', 0))
-                            # On vérifie l'autorisation d'empilage
-                            autorise = str(row.get('Empilable', 'Non')).strip().lower()
-                            
-                            for ref in refs:
-                                if ref in ligne and len(ref) > 3:
-                                    nombres = re.findall(r'\b\d+\b', ligne)
-                                    qte = int(nombres[0]) if nombres else 1
+                    for page in pdf.pages:
+                        lignes = page.extract_text().split('\n')
+                        for ligne in lignes:
+                            for _, row in df_articles.iterrows():
+                                ref_cible = str(row['Référence']).strip()
+                                
+                                # Sécurité : On vérifie si la référence est présente dans la ligne
+                                if ref_cible in ligne and len(ref_cible) > 3:
+                                    # --- EXTRACTION SÉCURISÉE DE LA QUANTITÉ ---
+                                    # On enlève la référence de la ligne pour ne pas la compter comme quantité
+                                    texte_sans_ref = ligne.replace(ref_cible, "")
+                                    # On cherche les nombres restants
+                                    nombres = re.findall(r'\b\d+\b', texte_sans_ref)
                                     
-                                    # --- CALCUL DE LA CAPACITÉ PAR PILE (HAUTEUR) ---
+                                    # On prend généralement le dernier nombre de la ligne (souvent la quantité)
+                                    # ou le premier nombre après la référence
+                                    qte = 1
+                                    if nombres:
+                                        qte = int(nombres[-1]) # On prend le dernier chiffre (plus fiable sur vos bons)
+                                    
+                                    # --- LOGIQUE DE CALCUL ---
+                                    l_art = float(row['Longueur (mm)'])
+                                    h_art = float(row.get('Hauteur (mm)', 0))
+                                    autorise = str(row.get('Empilable', 'Non')).strip().lower()
+                                    
+                                    # Hauteur
+                                    nb_etages = 1
                                     if autorise == 'oui' and h_art > 0:
-                                        nb_etages = math.floor(H_CAMION / h_art)
-                                        # Sécurité : au moins 1 étage, même si erreur hauteur
-                                        nb_etages = max(1, nb_etages)
-                                    else:
-                                        nb_etages = 1
+                                        nb_etages = max(1, math.floor(H_CAMION / h_art))
                                     
-                                    # --- CALCUL DE LA CAPACITÉ TOTALE PAR TRANCHE (LARGEUR + HAUTEUR) ---
-                                    # On considère 2 palettes côte à côte dans la largeur (2.46m)
-                                    capacite_par_tranche = 2 * nb_etages
+                                    # Capacité par tranche de 2.46m (Largeur)
+                                    capacite_tranche = 2 * nb_etages
                                     
-                                    # Nombre de tranches de longueur occupées
-                                    nb_tranches = math.ceil(qte / capacite_par_tranche)
-                                    occupation_sol = nb_tranches * l_art
-                                    total_mm_lineaire += occupation_sol
+                                    # Sol occupé
+                                    nb_tranches = math.ceil(qte / capacite_tranche)
+                                    sol_occupé = nb_tranches * l_art
+                                    total_mm_lineaire += sol_occupé
                                     
                                     details.append({
-                                        "Réf": ref,
-                                        "Qté": qte,
-                                        "H (mm)": h_art,
-                                        "Étages possibles": nb_etages,
-                                        "Capacité/Tranche": capacite_par_tranche,
-                                        "Sol occupé (mm)": occupation_sol
+                                        "Document": pdf_file.name,
+                                        "Référence": ref_cible,
+                                        "Qté réelle": qte,
+                                        "L (mm)": l_art,
+                                        "Étages": nb_etages,
+                                        "Sol (mm)": sol_occupé
                                     })
-                                    break
+                                    break # On passe à la ligne suivante du PDF
 
             # --- AFFICHAGE ---
             st.divider()
@@ -80,12 +84,10 @@ if uploaded_excel and uploaded_pdfs:
             
             c1, c2 = st.columns(2)
             c1.metric("Métrage Linéaire Total", f"{metrage_m:.2f} m")
-            c2.metric("NB CAMIONS (2.60m)", nb_camions)
+            c2.metric("NB CAMIONS (2.60m)", f"{nb_camions}")
 
-            st.subheader("Détail technique du chargement")
-            st.dataframe(pd.DataFrame(details), use_container_width=True)
-            
-            st.info(f"Note : Le calcul prévoit 2 colonnes de palettes sur la largeur de {l_CAMION/1000}m.")
+            st.subheader("Vérification des données extraites")
+            st.table(pd.DataFrame(details))
 
     except Exception as e:
-        st.error(f"Erreur : Vérifiez les colonnes 'Référence', 'Longueur (mm)', 'Hauteur (mm)' et 'Empilable'.\nDétail : {e}")
+        st.error(f"Erreur : {e}")
