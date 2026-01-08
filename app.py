@@ -5,7 +5,7 @@ import re
 import math
 
 st.set_page_config(page_title="Hako-Toro : Plan de Chargement", layout="wide")
-st.title("🚚 Planificateur de Chargement (Porteurs 2.60m)")
+st.title("🚚 Planificateur de Chargement")
 
 # --- CONFIGURATION FIXE ---
 L_CAMION = 2600 
@@ -19,30 +19,40 @@ uploaded_pdfs = st.file_uploader("Glissez vos PDF ici", type="pdf", accept_multi
 
 if uploaded_excel and uploaded_pdfs:
     try:
-        # Lecture de l'Excel
+        # Lecture de l'Excel - On s'assure que les références sont lues comme du texte
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
-        df_articles['Ref_Str'] = df_articles['Référence'].astype(str).str.strip()
         st.sidebar.success("✅ Base articles connectée")
         
         if st.button("🚀 GÉNÉRER LE PLAN DE CAMIONS"):
             toutes_les_tranches = []
 
-            # --- ÉTAPE 1 : EXTRACTION DES DONNÉES ---
+            # --- ÉTAPE 1 : EXTRACTION ---
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
-                    texte = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-                    lignes = texte.split('\n')
+                    # On extrait tout le texte du PDF d'un coup
+                    texte_pdf = ""
+                    for page in pdf.pages:
+                        texte_pdf += page.extract_text() + "\n"
+                    
+                    lignes = texte_pdf.split('\n')
 
                     for ligne in lignes:
                         for _, row in df_articles.iterrows():
-                            ref = row['Ref_Str']
+                            # On cherche la référence brute dans la ligne
+                            ref = str(row['Référence']).strip()
+                            
                             if ref in ligne and len(ref) > 3:
-                                # Extraction Quantité
+                                # On cherche tous les nombres dans la ligne pour trouver la quantité
                                 nombres = re.findall(r'\b\d+\b', ligne)
                                 qte = 1
                                 if nombres:
+                                    # On prend le dernier nombre de la ligne (souvent la qté)
                                     val = nombres[-1]
-                                    qte = int(nombres[-2]) if val == ref and len(nombres) > 1 else int(val)
+                                    # Si le dernier nombre est la ref, on prend l'avant-dernier
+                                    if val == ref and len(nombres) > 1:
+                                        qte = int(nombres[-2])
+                                    else:
+                                        qte = int(val)
 
                                 # Paramètres Logistiques
                                 l_art = float(row['Longueur (mm)'])
@@ -54,30 +64,31 @@ if uploaded_excel and uploaded_pdfs:
                                 if empilable == 'oui' and h_art > 0:
                                     nb_etages = max(1, math.floor(H_CAMION / h_art))
                                 
-                                # On divise la quantité par (2 colonnes * nb_etages)
+                                # 2 colonnes en largeur * nb_etages en hauteur
                                 capacite_par_rangée = 2 * nb_etages
                                 nb_rangées = math.ceil(qte / capacite_par_rangée)
 
-                                # On crée des blocs de chargement
+                                # Ajout à la liste de chargement
                                 for _ in range(nb_rangées):
                                     toutes_les_tranches.append({
-                                        "label": f"{ref} (Lot de {min(qte, capacite_par_rangée)} pces)",
-                                        "longueur": l_art
+                                        "label": f"Réf {ref} (Lot de {min(qte, capacite_par_rangée)} pces)",
+                                        "longueur": l_art,
+                                        "ref": ref
                                     })
-                                break
+                                break # On passe à la ligne suivante du PDF
 
             # --- ÉTAPE 2 : RÉPARTITION DANS LES CAMIONS ---
-            camions = []
             if toutes_les_tranches:
-                camion_actuel = {"longueur_libre": L_CAMION, "articles": []}
+                camions = []
+                camion_actuel = {"libre": L_CAMION, "articles": []}
                 
                 for item in toutes_les_tranches:
-                    if item["longueur"] <= camion_actuel["longueur_libre"]:
+                    if item["longueur"] <= camion_actuel["libre"]:
                         camion_actuel["articles"].append(item)
-                        camion_actuel["longueur_libre"] -= item["longueur"]
+                        camion_actuel["libre"] -= item["longueur"]
                     else:
                         camions.append(camion_actuel)
-                        camion_actuel = {"longueur_libre": L_CAMION - item["longueur"], "articles": [item]}
+                        camion_actuel = {"libre": L_CAMION - item["longueur"], "articles": [item]}
                 
                 camions.append(camion_actuel)
 
@@ -85,20 +96,20 @@ if uploaded_excel and uploaded_pdfs:
                 st.divider()
                 metrage_total = sum(t["longueur"] for t in toutes_les_tranches) / 1000
                 
-                col1, col2 = st.columns(2)
-                col1.metric("Métrage Linéaire Total", f"{metrage_total:.2f} m")
-                col2.metric("Nombre de Camions", len(camions))
+                c1, c2 = st.columns(2)
+                c1.metric("Métrage Linéaire Total", f"{metrage_total:.2f} m")
+                c2.metric("Nombre de Camions (2.60m)", len(camions))
 
-                st.subheader("📋 Liste de chargement par véhicule")
+                st.subheader("📋 Répartition par véhicule")
                 for i, cam in enumerate(camions, 1):
-                    with st.expander(f"🚛 CAMION N°{i} (Utilisé : {L_CAMION - cam['longueur_libre']} / {L_CAMION} mm)", expanded=True):
-                        # Regrouper les mêmes articles pour que ce soit lisible
-                        liste_brute = [a["label"] for a in cam["articles"]]
-                        inventaire = pd.Series(liste_brute).value_counts().reset_index()
-                        inventaire.columns = ['Désignation Article', 'Nombre de rangées au sol']
+                    with st.expander(f"🚛 CAMION N°{i} (Occupé : {L_CAMION - cam['libre']} / {L_CAMION} mm)", expanded=True):
+                        labels = [a["label"] for a in cam["articles"]]
+                        # On compte combien de fois chaque lot apparaît
+                        inventaire = pd.Series(labels).value_counts().reset_index()
+                        inventaire.columns = ['Désignation', 'Nombre de rangées au sol']
                         st.table(inventaire)
             else:
-                st.error("Aucun article correspondant n'a été trouvé dans le PDF.")
+                st.error("❌ Aucune référence trouvée. Vérifiez que l'onglet Excel s'appelle 'Palettes' et que les références sont bien dans la colonne 'Référence'.")
 
     except Exception as e:
         st.error(f"Erreur technique : {e}")
