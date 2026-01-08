@@ -2,11 +2,12 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
+import math
 
 # Configuration de l'interface
 st.set_page_config(page_title="Hako-Toro : Optimisation", layout="wide")
 
-st.title("🚚 Calculateur de Métrage (Optimisation Réelle)")
+st.title("🚚 Calculateur de Métrage (Calcul Gerbage Précis)")
 
 # --- CONFIGURATION ---
 st.sidebar.header("1. Configuration")
@@ -46,18 +47,20 @@ if uploaded_excel and uploaded_pdfs:
                                         autres = [n for n in nombres if n != ref]
                                         if autres: qte = int(autres[0])
                                     
-                                    # Calcul Brut (File indienne)
+                                    # 1. Calcul Brut (Tout au sol)
                                     brut_ligne = l_art * qte
                                     total_mm_brut += brut_ligne
                                     
-                                    # Calcul Optimisé (Gerbage)
-                                    # Si deux palettes tiennent en hauteur, on divise la longueur par 2
+                                    # 2. Calcul Optimisé (Vrai calcul de gerbage)
                                     if h_art > 0 and (h_art * 2) <= h_camion:
-                                        opti_ligne = brut_ligne / 2
                                         gerbable = "✅ Oui (x2)"
+                                        # On divise la quantité par 2 et on arrondit au-dessus
+                                        # Ex: 3 machines = 2 places au sol (une pile de 2 + une seule)
+                                        nb_piles = math.ceil(qte / 2)
+                                        opti_ligne = nb_piles * l_art
                                     else:
-                                        opti_ligne = brut_ligne
                                         gerbable = "❌ Non"
+                                        opti_ligne = l_art * qte
                                     
                                     total_mm_optimise += opti_ligne
                                     
@@ -78,25 +81,23 @@ if uploaded_excel and uploaded_pdfs:
             
             with c1:
                 st.metric("Métrage TOTAL (Brut)", f"{total_mm_brut / 1000:.2f} m")
-                st.caption("Si aucune palette n'est empilée.")
+                st.caption("Si tout est posé au sol sans empiler.")
             
             with c2:
-                st.status = st.metric("Métrage OPTIMISÉ", f"{total_mm_optimise / 1000:.2f} m", delta=f"-{(total_mm_brut - total_mm_optimise)/1000:.2f}m gagnés", delta_color="normal")
-                st.caption("Prend en compte l'empilage des palettes basses.")
+                gain = (total_mm_brut - total_mm_optimise) / 1000
+                st.metric("Métrage RÉEL (Optimisé)", f"{total_mm_optimise / 1000:.2f} m", delta=f"-{gain:.2f}m gagnés")
+                st.caption("Prend en compte l'empilage par paires.")
 
             st.subheader("Détail des articles détectés")
             st.dataframe(pd.DataFrame(details), use_container_width=True)
             
-            # Conseil final
             m_final = total_mm_optimise / 1000
             if m_final > 8:
                 st.warning(f"Prévoir une Semi-remorque (Besoin : {m_final:.1f}m)")
             elif m_final > 4:
-                st.info(f"Un porteur de 8m devrait suffire (Besoin : {m_final:.1f}m)")
+                st.info(f"Un porteur de 8m suffit (Besoin : {m_final:.1f}m)")
             else:
-                st.success(f"Un petit porteur ou fourgon suffit (Besoin : {m_final:.1f}m)")
+                st.success(f"Un petit porteur suffit (Besoin : {m_final:.1f}m)")
 
     except Exception as e:
         st.error(f"Erreur technique : {e}")
-else:
-    st.info("Veuillez charger l'Excel à gauche et les PDF au centre.")
