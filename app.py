@@ -4,18 +4,19 @@ import pdfplumber
 import re
 import math
 
-# Configuration de l'interface
-st.set_page_config(page_title="Hako-Toro : Optimisation", layout="wide")
-
-st.title("🚚 Calculateur de Métrage (Calcul Gerbage Précis)")
+st.set_page_config(page_title="Hako-Toro : Optimisation Finale", layout="wide")
+st.title("🚚 Calculateur de Chargement Intelligent")
 
 # --- CONFIGURATION ---
-st.sidebar.header("1. Configuration")
-uploaded_excel = st.sidebar.file_uploader("Charger la base Excel (Palettes)", type=None)
-h_camion = st.sidebar.number_input("Hauteur utile du camion (mm)", value=2600)
+st.sidebar.header("1. Paramètres Camion")
+# Valeurs transmises : Longueur 2.60m, Largeur 2.46m
+L_CAMION = 2600 
+l_CAMION = 2460
+H_CAMION = st.sidebar.number_input("Hauteur utile du camion (mm)", value=2600)
 
-# --- ZONE DOCUMENTS ---
-st.subheader("2. Chargement des documents")
+uploaded_excel = st.sidebar.file_uploader("Charger la base Excel (Palettes)", type=None)
+
+st.subheader("2. Documents à analyser")
 uploaded_pdfs = st.file_uploader("Glissez vos PDF ici", type="pdf", accept_multiple_files=True)
 
 if uploaded_excel and uploaded_pdfs:
@@ -24,8 +25,7 @@ if uploaded_excel and uploaded_pdfs:
         st.sidebar.success("✅ Base articles connectée")
         
         if st.button("🚀 LANCER LE CALCUL"):
-            total_mm_brut = 0
-            total_mm_optimise = 0
+            total_mm_lineaire = 0
             details = []
 
             for pdf_file in uploaded_pdfs:
@@ -38,66 +38,54 @@ if uploaded_excel and uploaded_pdfs:
                             refs = [r.strip() for r in str(row['Référence']).split('/')]
                             l_art = float(row['Longueur (mm)'])
                             h_art = float(row.get('Hauteur (mm)', 0))
+                            # On vérifie l'autorisation d'empilage
+                            autorise = str(row.get('Empilable', 'Non')).strip().lower()
                             
                             for ref in refs:
                                 if ref in ligne and len(ref) > 3:
                                     nombres = re.findall(r'\b\d+\b', ligne)
-                                    qte = 1
-                                    if len(nombres) >= 2:
-                                        autres = [n for n in nombres if n != ref]
-                                        if autres: qte = int(autres[0])
+                                    qte = int(nombres[0]) if nombres else 1
                                     
-                                    # 1. Calcul Brut (Tout au sol)
-                                    brut_ligne = l_art * qte
-                                    total_mm_brut += brut_ligne
-                                    
-                                    # 2. Calcul Optimisé (Vrai calcul de gerbage)
-                                    if h_art > 0 and (h_art * 2) <= h_camion:
-                                        gerbable = "✅ Oui (x2)"
-                                        # On divise la quantité par 2 et on arrondit au-dessus
-                                        # Ex: 3 machines = 2 places au sol (une pile de 2 + une seule)
-                                        nb_piles = math.ceil(qte / 2)
-                                        opti_ligne = nb_piles * l_art
+                                    # --- CALCUL DE LA CAPACITÉ PAR PILE (HAUTEUR) ---
+                                    if autorise == 'oui' and h_art > 0:
+                                        nb_etages = math.floor(H_CAMION / h_art)
+                                        # Sécurité : au moins 1 étage, même si erreur hauteur
+                                        nb_etages = max(1, nb_etages)
                                     else:
-                                        gerbable = "❌ Non"
-                                        opti_ligne = l_art * qte
+                                        nb_etages = 1
                                     
-                                    total_mm_optimise += opti_ligne
+                                    # --- CALCUL DE LA CAPACITÉ TOTALE PAR TRANCHE (LARGEUR + HAUTEUR) ---
+                                    # On considère 2 palettes côte à côte dans la largeur (2.46m)
+                                    capacite_par_tranche = 2 * nb_etages
+                                    
+                                    # Nombre de tranches de longueur occupées
+                                    nb_tranches = math.ceil(qte / capacite_par_tranche)
+                                    occupation_sol = nb_tranches * l_art
+                                    total_mm_lineaire += occupation_sol
                                     
                                     details.append({
-                                        "Document": pdf_file.name,
-                                        "Référence": ref,
+                                        "Réf": ref,
                                         "Qté": qte,
-                                        "L (mm)": l_art,
                                         "H (mm)": h_art,
-                                        "Gerbable": gerbable,
-                                        "Métrage Sol (mm)": opti_ligne
+                                        "Étages possibles": nb_etages,
+                                        "Capacité/Tranche": capacite_par_tranche,
+                                        "Sol occupé (mm)": occupation_sol
                                     })
                                     break
 
-            # --- AFFICHAGE DES RÉSULTATS ---
+            # --- AFFICHAGE ---
             st.divider()
+            metrage_m = total_mm_lineaire / 1000
+            nb_camions = math.ceil(total_mm_lineaire / L_CAMION)
+            
             c1, c2 = st.columns(2)
-            
-            with c1:
-                st.metric("Métrage TOTAL (Brut)", f"{total_mm_brut / 1000:.2f} m")
-                st.caption("Si tout est posé au sol sans empiler.")
-            
-            with c2:
-                gain = (total_mm_brut - total_mm_optimise) / 1000
-                st.metric("Métrage RÉEL (Optimisé)", f"{total_mm_optimise / 1000:.2f} m", delta=f"-{gain:.2f}m gagnés")
-                st.caption("Prend en compte l'empilage par paires.")
+            c1.metric("Métrage Linéaire Total", f"{metrage_m:.2f} m")
+            c2.metric("NB CAMIONS (2.60m)", nb_camions)
 
-            st.subheader("Détail des articles détectés")
+            st.subheader("Détail technique du chargement")
             st.dataframe(pd.DataFrame(details), use_container_width=True)
             
-            m_final = total_mm_optimise / 1000
-            if m_final > 8:
-                st.warning(f"Prévoir une Semi-remorque (Besoin : {m_final:.1f}m)")
-            elif m_final > 4:
-                st.info(f"Un porteur de 8m suffit (Besoin : {m_final:.1f}m)")
-            else:
-                st.success(f"Un petit porteur suffit (Besoin : {m_final:.1f}m)")
+            st.info(f"Note : Le calcul prévoit 2 colonnes de palettes sur la largeur de {l_CAMION/1000}m.")
 
     except Exception as e:
-        st.error(f"Erreur technique : {e}")
+        st.error(f"Erreur : Vérifiez les colonnes 'Référence', 'Longueur (mm)', 'Hauteur (mm)' et 'Empilable'.\nDétail : {e}")
