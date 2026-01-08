@@ -6,7 +6,7 @@ import re
 # Configuration de l'interface
 st.set_page_config(page_title="Hako-Toro : Optimisation", layout="wide")
 
-st.title("🚚 Calculateur de Métrage & Hauteur Camion")
+st.title("🚚 Calculateur de Métrage (Optimisation Réelle)")
 
 # --- CONFIGURATION ---
 st.sidebar.header("1. Configuration")
@@ -22,10 +22,10 @@ if uploaded_excel and uploaded_pdfs:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         st.sidebar.success("✅ Base articles connectée")
         
-        if st.button("🚀 LANCER LE CALCUL ANALYTIQUE"):
-            total_mm_sol = 0
+        if st.button("🚀 LANCER LE CALCUL"):
+            total_mm_brut = 0
+            total_mm_optimise = 0
             details = []
-            alertes_hauteur = []
 
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
@@ -34,7 +34,6 @@ if uploaded_excel and uploaded_pdfs:
 
                     for ligne in lignes:
                         for _, row in df_articles.iterrows():
-                            # Nettoyage références
                             refs = [r.strip() for r in str(row['Référence']).split('/')]
                             l_art = float(row['Longueur (mm)'])
                             h_art = float(row.get('Hauteur (mm)', 0))
@@ -47,42 +46,23 @@ if uploaded_excel and uploaded_pdfs:
                                         autres = [n for n in nombres if n != ref]
                                         if autres: qte = int(autres[0])
                                     
-                                    s_total_l = l_art * qte
-                                    total_mm_sol += s_total_l
+                                    # Calcul Brut (File indienne)
+                                    brut_ligne = l_art * qte
+                                    total_mm_brut += brut_ligne
                                     
-                                    # Analyse gerbage
-                                    peut_gerber = "Oui (x2)" if h_art * 2 <= h_camion else "Non"
+                                    # Calcul Optimisé (Gerbage)
+                                    # Si deux palettes tiennent en hauteur, on divise la longueur par 2
+                                    if h_art > 0 and (h_art * 2) <= h_camion:
+                                        opti_ligne = brut_ligne / 2
+                                        gerbable = "✅ Oui (x2)"
+                                    else:
+                                        opti_ligne = brut_ligne
+                                        gerbable = "❌ Non"
                                     
-                                    # On crée la ligne de résultat
-                                    item = {
+                                    total_mm_optimise += opti_ligne
+                                    
+                                    details.append({
                                         "Document": pdf_file.name,
                                         "Référence": ref,
                                         "Qté": qte,
-                                        "L (mm)": l_art,
-                                        "H (mm)": h_art,
-                                        "Gerbable": peut_gerber,
-                                        "Total Sol (mm)": s_total_l
-                                    }
-                                    details.append(item)
-                                    
-                                    if h_art > h_camion:
-                                        alertes_hauteur.append(f"⚠️ {ref} TROP HAUT ({h_art}mm)")
-                                    break
-
-            # --- RÉSULTATS ---
-            st.divider()
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Métrage au sol TOTAL", f"{total_mm_sol / 1000:.2f} m")
-            c2.metric("Nb articles", len(details))
-            c3.metric("Métrage optimisé (est.)", f"{(total_mm_sol / 1000) * 0.7:.2f} m")
-
-            for msg in alertes_hauteur:
-                st.error(msg)
-
-            st.subheader("Détail du chargement")
-            st.dataframe(pd.DataFrame(details), use_container_width=True)
-
-    except Exception as e:
-        st.error(f"Erreur : {e}")
-else:
-    st.info("En attente de l'Excel et des PDF...")
+                                        "L (mm)": l_art
