@@ -4,26 +4,28 @@ import pdfplumber
 import re
 import math
 
-st.set_page_config(page_title="Hako-Toro : Optimisation Précise", layout="wide")
-st.title("🚚 Optimisation de Chargement (Calcul par Surface)")
+st.set_page_config(page_title="Hako-Toro : Organisateur Universel", layout="wide")
+st.title("🚚 Planificateur de Chargement Multi-Bons")
 
-# --- CONFIGURATION OFFICIELLE ---
+# --- CONFIGURATION FIXE ---
 L_UTILE = 13600  # Longueur semi (mm)
-l_UTILE = 2460   # Largeur utile (mm)
 H_UTILE = 2700   # Hauteur utile (mm)
+SEUIL_LARGEUR_PLEINE = 1100 # Seuil pour bloquer une rangée complète (mm)
 
-st.sidebar.header("1. Paramètres")
+st.sidebar.header("1. Configuration")
 uploaded_excel = st.sidebar.file_uploader("Base Excel (Palettes)", type=None)
-uploaded_pdfs = st.file_uploader("2. Bons de Préparation (PDF)", type="pdf", accept_multiple_files=True)
+uploaded_pdfs = st.file_uploader("2. Charger TOUS les PDF", type="pdf", accept_multiple_files=True)
 
 if uploaded_excel and uploaded_pdfs:
     try:
+        # Lecture de la base
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
+        st.sidebar.success(f"✅ {len(df_articles)} références chargées")
         
-        if st.button("🚀 CALCULER L'OPTIMISATION"):
-            surface_totale_sol_requise = 0
-            details_chargement = []
+        if st.button("🚀 GÉNÉRER LE PLAN DE CHARGEMENT"):
+            toutes_les_tranches = []
 
+            # --- ANALYSE DE CHAQUE BON ---
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
                     texte = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
@@ -31,7 +33,7 @@ if uploaded_excel and uploaded_pdfs:
 
                     for ligne in lignes:
                         for _, row in df_articles.iterrows():
-                            # Gestion des références groupées (ex: 74677 / 74679)
+                            # Gestion des références multiples (74677 / 74679...)
                             liste_refs = [r.strip() for r in str(row['Référence']).split('/')]
                             
                             for ref_solo in liste_refs:
@@ -49,45 +51,60 @@ if uploaded_excel and uploaded_pdfs:
                                     haut_p = float(row['Hauteur (mm)'])
                                     empilable = str(row.get('Empilable', 'Oui')).strip().lower() == 'oui'
 
-                                    # 1. Calcul du gerbage (Combien l'un sur l'autre ?)
+                                    # 1. Calcul du gerbage (Hauteur)
                                     nb_etages = max(1, math.floor(H_UTILE / haut_p)) if empilable else 1
-                                    
-                                    # 2. Nombre de "places au sol" nécessaires pour cet article
-                                    # On divise la quantité par le nombre d'étages
-                                    places_sol = math.ceil(qte / nb_etages)
-                                    
-                                    # 3. Calcul de la surface occupée (Long x Larg)
-                                    # Comme on charge en 2 colonnes, on ramène tout à la largeur de 1.23m (2.46m/2)
-                                    # pour obtenir un métrage linéaire précis.
-                                    metrage_ligne = (places_sol * long_p) / 2 # Division par 2 car 2 colonnes de large
-                                    
-                                    surface_totale_sol_requise += metrage_ligne
-                                    
-                                    details_chargement.append({
-                                        "Réf": ref_solo,
-                                        "Qté": qte,
-                                        "Étages": nb_etages,
-                                        "Long (mm)": long_p,
-                                        "Métrage (mm)": metrage_ligne
+                                    nb_places_sol = math.ceil(qte / nb_etages)
+
+                                    # 2. Calcul du métrage (Largeur)
+                                    # Règle : Si > 1100mm, prend toute la largeur du camion
+                                    if larg_p > SEUIL_LARGEUR_PLEINE:
+                                        metrage_item = nb_places_sol * long_p
+                                        note = "Pleine Largeur"
+                                    else:
+                                        metrage_item = (nb_places_sol * long_p) / 2
+                                        note = "Demi-Largeur"
+
+                                    # On ajoute chaque lot à la liste globale
+                                    toutes_les_tranches.append({
+                                        "Ref": ref_solo,
+                                        "Libellé": f"{ref_solo} ({note})",
+                                        "Longueur": metrage_item,
+                                        "Détail": f"Lot de {qte} (sur {nb_places_sol} place(s) au sol)"
                                     })
                                     break
 
-            if details_chargement:
+            # --- RÉPARTITION DANS LES CAMIONS ---
+            if toutes_les_tranches:
+                camions = []
+                camion_actuel = {"libre": L_UTILE, "articles": [], "occupé": 0}
+
+                for item in toutes_les_tranches:
+                    if item["Longueur"] <= camion_actuel["libre"]:
+                        camion_actuel["articles"].append(item)
+                        camion_actuel["occupé"] += item["Longueur"]
+                        camion_actuel["libre"] -= item["Longueur"]
+                    else:
+                        camions.append(camion_actuel)
+                        camion_actuel = {"libre": L_UTILE - item["Longueur"], "articles": [item], "occupé": item["Longueur"]}
+                camions.append(camion_actuel)
+
+                # --- AFFICHAGE FINAL ---
                 st.divider()
-                metrage_final_m = surface_totale_sol_requise / 1000
-                nb_semis = math.ceil(metrage_final_m / 13.6)
-
-                c1, c2 = st.columns(2)
-                c1.metric("Métrage Linéaire TOTAL", f"{metrage_final_m:.2f} m")
-                c2.metric("Nombre de Semi (13.6m)", nb_semis)
-
-                st.subheader("Détail du calcul d'occupation")
-                st.dataframe(pd.DataFrame(details_chargement), use_container_width=True)
+                m_total = sum(i["Longueur"] for i in toutes_les_tranches) / 1000
                 
-                # Répartition virtuelle simple
-                st.info(f"💡 Ce métrage de {metrage_final_m:.2f}m correspond à l'occupation réelle dans un camion de 2.46m de large.")
+                col1, col2 = st.columns(2)
+                col1.metric("Métrage Linéaire TOTAL", f"{m_total:.2f} m")
+                col2.metric("Camions nécessaires (13.6m)", len(camions))
+
+                st.subheader("📋 Quel article mettre dans quel camion ?")
+                for i, cam in enumerate(camions, 1):
+                    with st.expander(f"🚛 CAMION N°{i} - Occupation : {cam['occupé']/1000:.2f} m / 13.6 m", expanded=True):
+                        # Regrouper pour la lisibilité
+                        df_cam = pd.DataFrame(cam["articles"])
+                        inventaire = df_cam.groupby(['Libellé', 'Détail']).size().reset_index(name='Nombre de rangées')
+                        st.table(inventaire)
             else:
-                st.error("Aucune référence détectée.")
+                st.error("Aucune correspondance trouvée entre vos PDF et votre Excel.")
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Erreur technique : {e}")
