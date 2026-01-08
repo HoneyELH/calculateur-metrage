@@ -65,4 +65,38 @@ if uploaded_excel and uploaded_pdfs:
                                         "Document": pdf_file.name,
                                         "Référence": ref,
                                         "Qté": qte,
-                                        "L (mm)": l_art
+                                        "L (mm)": l_art,
+                                        "H (mm)": h_art,
+                                        "Gerbable": gerbable,
+                                        "Métrage Sol (mm)": opti_ligne
+                                    })
+                                    break
+
+            # --- AFFICHAGE DES RÉSULTATS ---
+            st.divider()
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                st.metric("Métrage TOTAL (Brut)", f"{total_mm_brut / 1000:.2f} m")
+                st.caption("Si aucune palette n'est empilée.")
+            
+            with c2:
+                st.status = st.metric("Métrage OPTIMISÉ", f"{total_mm_optimise / 1000:.2f} m", delta=f"-{(total_mm_brut - total_mm_optimise)/1000:.2f}m gagnés", delta_color="normal")
+                st.caption("Prend en compte l'empilage des palettes basses.")
+
+            st.subheader("Détail des articles détectés")
+            st.dataframe(pd.DataFrame(details), use_container_width=True)
+            
+            # Conseil final
+            m_final = total_mm_optimise / 1000
+            if m_final > 8:
+                st.warning(f"Prévoir une Semi-remorque (Besoin : {m_final:.1f}m)")
+            elif m_final > 4:
+                st.info(f"Un porteur de 8m devrait suffire (Besoin : {m_final:.1f}m)")
+            else:
+                st.success(f"Un petit porteur ou fourgon suffit (Besoin : {m_final:.1f}m)")
+
+    except Exception as e:
+        st.error(f"Erreur technique : {e}")
+else:
+    st.info("Veuillez charger l'Excel à gauche et les PDF au centre.")
