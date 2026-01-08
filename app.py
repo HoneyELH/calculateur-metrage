@@ -5,7 +5,7 @@ import re
 import math
 
 st.set_page_config(page_title="Hako-Toro : Plan de Chargement", layout="wide")
-st.title("🚚 Organisateur de Chargement par Camion")
+st.title("🚚 Planificateur de Chargement (Porteurs 2.60m)")
 
 # --- CONFIGURATION FIXE ---
 L_CAMION = 2600 
@@ -14,18 +14,20 @@ H_CAMION = 2600
 st.sidebar.header("1. Configuration")
 uploaded_excel = st.sidebar.file_uploader("Charger la base Excel (Palettes)", type=None)
 
-st.subheader("2. Documents")
+st.subheader("2. Charger les Bons de Préparation (PDF)")
 uploaded_pdfs = st.file_uploader("Glissez vos PDF ici", type="pdf", accept_multiple_files=True)
 
 if uploaded_excel and uploaded_pdfs:
     try:
+        # Lecture de l'Excel
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
+        df_articles['Ref_Str'] = df_articles['Référence'].astype(str).str.strip()
         st.sidebar.success("✅ Base articles connectée")
         
-        if st.button("🚀 GÉNÉRER LE PLAN DE CHARGEMENT"):
-            liste_globale_tranches = []
+        if st.button("🚀 GÉNÉRER LE PLAN DE CAMIONS"):
+            toutes_les_tranches = []
 
-            # 1. ANALYSE DES DOCUMENTS
+            # --- ÉTAPE 1 : EXTRACTION DES DONNÉES ---
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
                     texte = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
@@ -33,61 +35,70 @@ if uploaded_excel and uploaded_pdfs:
 
                     for ligne in lignes:
                         for _, row in df_articles.iterrows():
-                            ref_cible = str(row['Référence']).strip()
-                            if ref_cible in ligne and len(ref_cible) > 3:
+                            ref = row['Ref_Str']
+                            if ref in ligne and len(ref) > 3:
                                 # Extraction Quantité
                                 nombres = re.findall(r'\b\d+\b', ligne)
                                 qte = 1
                                 if nombres:
                                     val = nombres[-1]
-                                    qte = int(nombres[-2]) if val == ref_cible and len(nombres) > 1 else int(val)
+                                    qte = int(nombres[-2]) if val == ref and len(nombres) > 1 else int(val)
 
-                                # Paramètres article
+                                # Paramètres Logistiques
                                 l_art = float(row['Longueur (mm)'])
                                 h_art = float(row.get('Hauteur (mm)', 0))
-                                autorise = str(row.get('Empilable', 'Non')).strip().lower()
+                                empilable = str(row.get('Empilable', 'Non')).strip().lower()
                                 
-                                # Calcul capacité par tranche de longueur (Largeur + Hauteur)
-                                etages = max(1, math.floor(H_CAMION / h_art)) if (autorise == 'oui' and h_art > 0) else 1
-                                capacite_tranche = 2 * etages
-                                nb_tranches_necessaires = math.ceil(qte / capacite_tranche)
+                                # Calcul des couches (Hauteur)
+                                nb_etages = 1
+                                if empilable == 'oui' and h_art > 0:
+                                    nb_etages = max(1, math.floor(H_CAMION / h_art))
+                                
+                                # On divise la quantité par (2 colonnes * nb_etages)
+                                capacite_par_rangée = 2 * nb_etages
+                                nb_rangées = math.ceil(qte / capacite_par_rangée)
 
-                                # On ajoute chaque "tranche" de cet article à la liste d'attente
-                                for _ in range(nb_tranches_necessaires):
-                                    liste_globale_tranches.append({
-                                        "Réf": ref_cible,
-                                        "L": l_art,
-                                        "Détail": f"{ref_cible} (Lot de {min(qte, capacite_tranche)})"
+                                # On crée des blocs de chargement
+                                for _ in range(nb_rangées):
+                                    toutes_les_tranches.append({
+                                        "label": f"{ref} (Lot de {min(qte, capacite_par_rangée)} pces)",
+                                        "longueur": l_art
                                     })
                                 break
 
-            # 2. RÉPARTITION DANS LES CAMIONS (Algorithme de remplissage)
+            # --- ÉTAPE 2 : RÉPARTITION DANS LES CAMIONS ---
             camions = []
-            camion_actuel = {"longueur_utilisee": 0, "articles": []}
-
-            for tranche in liste_globale_tranches:
-                # Si la tranche d'article rentre dans le camion actuel
-                if camion_actuel["longueur_utilisee"] + tranche["L"] <= L_CAMION:
-                    camion_actuel["longueur_utilisee"] += tranche["L"]
-                    camion_actuel["articles"].append(tranche["Détail"])
-                else:
-                    # Sinon on ferme ce camion et on en ouvre un nouveau
-                    camions.append(camion_actuel)
-                    camion_actuel = {"longueur_utilisee": tranche["L"], "articles": [tranche["Détail"]]}
-            
-            if camion_actuel["articles"]:
+            if toutes_les_tranches:
+                camion_actuel = {"longueur_libre": L_CAMION, "articles": []}
+                
+                for item in toutes_les_tranches:
+                    if item["longueur"] <= camion_actuel["longueur_libre"]:
+                        camion_actuel["articles"].append(item)
+                        camion_actuel["longueur_libre"] -= item["longueur"]
+                    else:
+                        camions.append(camion_actuel)
+                        camion_actuel = {"longueur_libre": L_CAMION - item["longueur"], "articles": [item]}
+                
                 camions.append(camion_actuel)
 
-            # 3. AFFICHAGE DU PLAN
-            st.divider()
-            st.header(f"📋 Répartition : {len(camions)} Camion(s) nécessaire(s)")
+                # --- ÉTAPE 3 : AFFICHAGE ---
+                st.divider()
+                metrage_total = sum(t["longueur"] for t in toutes_les_tranches) / 1000
+                
+                col1, col2 = st.columns(2)
+                col1.metric("Métrage Linéaire Total", f"{metrage_total:.2f} m")
+                col2.metric("Nombre de Camions", len(camions))
 
-            for i, c in enumerate(camions, 1):
-                with st.expander(f"🚛 CAMION N°{i} - Remplissage : {c['longueur_utilisee']} / {L_CAMION} mm", expanded=True):
-                    # On regroupe les articles identiques pour la lisibilité
-                    df_camion = pd.Series(c['articles']).value_counts().reset_index()
-                    df_camion.columns = ['Article (et son lot)', 'Nombre de rangées']
-                    st.table(df_camion)
+                st.subheader("📋 Liste de chargement par véhicule")
+                for i, cam in enumerate(camions, 1):
+                    with st.expander(f"🚛 CAMION N°{i} (Utilisé : {L_CAMION - cam['longueur_libre']} / {L_CAMION} mm)", expanded=True):
+                        # Regrouper les mêmes articles pour que ce soit lisible
+                        liste_brute = [a["label"] for a in cam["articles"]]
+                        inventaire = pd.Series(liste_brute).value_counts().reset_index()
+                        inventaire.columns = ['Désignation Article', 'Nombre de rangées au sol']
+                        st.table(inventaire)
+            else:
+                st.error("Aucun article correspondant n'a été trouvé dans le PDF.")
 
     except Exception as e:
         st.error(f"Erreur technique : {e}")
