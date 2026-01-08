@@ -11,7 +11,7 @@ st.markdown("Calculez instantanément l'encombrement de vos commandes.")
 
 # --- SECTION 1 : BASE DE DONNÉES ---
 st.sidebar.header("Configuration")
-uploaded_excel = st.sidebar.file_uploader("1. Charger la base Excel (Palettes)", type="xlsx")
+uploaded_excel = st.sidebar.file_uploader("1. Charger la base Excel (Palettes)", type=None)
 
 # --- SECTION 2 : DOCUMENTS PDF ---
 uploaded_pdfs = st.file_uploader("2. Glissez vos Bons de Commande (PDF) ici", type="pdf", accept_multiple_files=True)
