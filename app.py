@@ -4,13 +4,14 @@ import pdfplumber
 import re
 import math
 
-st.set_page_config(page_title="Hako-Toro : Optimisation Finale", layout="wide")
-st.title("🚚 Plan de Chargement (Optimisation par Dimensions)")
+st.set_page_config(page_title="Hako-Toro : Cible 17m", layout="wide")
+st.title("🚚 Planificateur de Chargement - Cible 17m")
 
-# --- PARAMÈTRES RÉELS ---
-L_UTILE = 13600 #
-H_UTILE = 2600  #
-SEUIL_LARGEUR_PLEINE = 1100 
+# --- PARAMÈTRES AJUSTÉS ---
+L_UTILE = 13600 
+H_UTILE = 2600  
+# On passe à 1230mm pour autoriser deux machines de 1.20m côte à côte
+SEUIL_LARGEUR_PLEINE = 1230 
 
 uploaded_excel = st.sidebar.file_uploader("1. Base Excel", type=None)
 uploaded_pdfs = st.file_uploader("2. Charger les PDF", type="pdf", accept_multiple_files=True)
@@ -19,7 +20,7 @@ if uploaded_excel and uploaded_pdfs:
     try:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         
-        if st.button("🚀 CALCULER LE PLAN FINAL"):
+        if st.button("🚀 GÉNÉRER LE PLAN (SEUIL 1.23M)"):
             all_palettes = []
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
@@ -44,8 +45,7 @@ if uploaded_excel and uploaded_pdfs:
                                     break
 
             piles = []
-            
-            # --- 1. GESTION DES CARTONS (Mélange total + Pyramide) ---
+            # 1. CARTONS (Mélange total + Pyramide)
             cartons = sorted([p for p in all_palettes if p['Mat'] == 'carton'], key=lambda x: x['l'], reverse=True)
             while cartons:
                 base = cartons.pop(0)
@@ -58,34 +58,37 @@ if uploaded_excel and uploaded_pdfs:
                     else: i += 1
                 piles.append({"Refs": p_refs, "L": base['L'], "l": base['l'], "Mat": "carton"})
 
-            # --- 2. GESTION DU BOIS (Mélange si mêmes dimensions + Pyramide) ---
+            # 2. BOIS (Mêmes dimensions uniquement)
             bois_all = [p for p in all_palettes if p['Mat'] == 'bois']
-            dims_bois = set(p['Dim_Key'] for p in bois_all)
-            
-            for d_key in dims_bois:
-                groupe = sorted([p for p in bois_all if p['Dim_Key'] == d_key], key=lambda x: x['l'], reverse=True)
+            for d_key in set(p['Dim_Key'] for p in bois_all):
+                groupe = [p for p in bois_all if p['Dim_Key'] == d_key]
                 while groupe:
                     base = groupe.pop(0)
                     h_actuelle, p_refs = base['H'], [base['Ref']]
                     i = 0
                     while i < len(groupe):
-                        # On vérifie la hauteur et la largeur (pour la pyramide si besoin)
-                        if h_actuelle + groupe[i]['H'] <= H_UTILE and groupe[i]['l'] <= base['l']:
+                        if h_actuelle + groupe[i]['H'] <= H_UTILE:
                             h_actuelle += groupe[i]['H']
                             p_refs.append(groupe.pop(i)['Ref'])
                         else: i += 1
                     piles.append({"Refs": p_refs, "L": base['L'], "l": base['l'], "Mat": "bois"})
 
-            # --- 3. GESTION DU FER (Non-empilable) ---
+            # 3. FER
             for p in [p for p in all_palettes if p['Mat'] == 'fer']:
                 piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l'], "Mat": "fer"})
 
-            # --- RÉSULTATS ---
-            total_mm = sum([p['L'] if p['l'] > SEUIL_LARGEUR_PLEINE else p['L']/2 for p in piles])
+            # --- CALCUL DU MÉTRAGE ---
+            total_mm = 0
+            for p in piles:
+                if p['l'] > SEUIL_LARGEUR_PLEINE:
+                    total_mm += p['L']
+                else:
+                    total_mm += (p['L'] / 2)
+
             st.divider()
-            st.metric("📏 MÉTRAGE LINÉAIRE TOTAL OPTIMISÉ", f"{total_mm / 1000:.2f} m")
+            st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_mm / 1000:.2f} m")
             
-            # Répartition Camions
+            # Affichage Camions
             camions, c_actuel = [], {"libre": L_UTILE, "piles": []}
             for p in piles:
                 lg_sol = p['L'] if p['l'] > SEUIL_LARGEUR_PLEINE else p['L']/2
@@ -99,6 +102,6 @@ if uploaded_excel and uploaded_pdfs:
 
             for idx, c in enumerate(camions, 1):
                 with st.expander(f"🚛 CAMION N°{idx} - {(L_UTILE-c['libre'])/1000:.2f} m", expanded=True):
-                    st.table([{"Pile (Bas ⬆️ Haut)": " / ".join(p['Refs']), "Matériau": p['Mat']} for p in c['piles']])
+                    st.table([{"Pile": " / ".join(p['Refs']), "Matériau": p['Mat'], "Largeur": f"{p['l']} mm"} for p in c['piles']])
     except Exception as e:
         st.error(f"Erreur : {e}")
