@@ -2,17 +2,17 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
-from itertools import combinations, product
+from itertools import product
 
 # =========================
-# CONFIG CAMION
+# CONFIGURATION CAMION
 # =========================
 L_UTILE = 13600
 LARG_UTILE = 2460
 H_UTILE = 2600
 
-st.set_page_config(page_title="Hako-Toro : 17m Final", layout="wide")
-st.title("🚚 Planification Optimisée 17m (Optimal)")
+st.set_page_config(page_title="Hako-Toro : 17m Optimal", layout="wide")
+st.title("🚚 Planification Optimisée 17m (Backtracking)")
 
 uploaded_excel = st.sidebar.file_uploader("1️⃣ Base Excel", type=["xlsx"])
 uploaded_pdfs = st.sidebar.file_uploader("2️⃣ Bons PDF", type="pdf", accept_multiple_files=True)
@@ -100,7 +100,7 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
             })
 
         # =========================
-        # JUMELAGE OPTIMAL (Backtracking limité)
+        # JUMELAGE OPTIMAL (Backtracking)
         # =========================
         rangees = []
         remaining = piles.copy()
@@ -108,31 +108,32 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
         while remaining:
             p1 = remaining.pop(0)
 
-            # FER → pile seule
+            # FER → seule
             if p1["Mat"] == "fer":
                 L1, l1 = min(p1["dims"], key=lambda x: x[1])
                 rangees.append({"G": {"Refs": p1["Refs"], "L": L1, "l": l1}, "D": None, "L_sol": L1})
                 continue
 
-            # Chercher la meilleure pile à mettre à côté
+            # Chercher la meilleure pile à côté (backtracking léger)
             best_pair = None
             best_L_sol = None
-            best_rotation = None
 
             for idx, p2 in enumerate(remaining):
                 if p2["Mat"] == "fer":
                     continue
-                # Test toutes les rotations
+
+                # Tester toutes les rotations des deux piles
                 for (L1, l1) in p1["dims"]:
                     for (L2, l2) in p2["dims"]:
                         if l1 + l2 <= LARG_UTILE:
                             L_sol = max(L1, L2)
-                            if best_L_sol is None or L_sol < best_L_sol:
-                                best_pair = (idx, p2, L1, l1, L2, l2)
+                            # Choisir la paire qui minimise le L_sol et maximise la largeur utilisée
+                            if best_L_sol is None or L_sol < best_L_sol or (L_sol == best_L_sol and l1 + l2 > best_pair[5]):
+                                best_pair = (idx, p2, L1, l1, L2, l2, l1 + l2)
                                 best_L_sol = L_sol
 
             if best_pair:
-                idx, p2, L1, l1, L2, l2 = best_pair
+                idx, p2, L1, l1, L2, l2, _ = best_pair
                 remaining.pop(idx)
                 rangees.append({
                     "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
@@ -172,4 +173,3 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
 
     except Exception as e:
         st.error(f"❌ Erreur : {e}")
-        
