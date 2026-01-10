@@ -3,14 +3,15 @@ import pandas as pd
 import pdfplumber
 import re
 
-st.set_page_config(page_title="Hako-Toro : 17m Réels", layout="wide")
-st.title("🚚 Planificateur de Chargement - Mode Double Colonne")
+st.set_page_config(page_title="Hako-Toro : Optimisation 17m", layout="wide")
+st.title("🚚 Plan de Chargement - Objectif 17m")
 
-# --- CONFIGURATION ---
+# --- PARAMÈTRES RÉELS DU CAMION ---
 L_UTILE = 13600  #
 LARG_UTILE = 2460 #
-H_UTILE = 2600   # Hauteur 2.6m
-SEUIL_DOUBLE = 1230 #
+H_UTILE = 2600   # Hauteur max
+# SEUIL AJUSTÉ : Permet de doubler les machines de 1.17m et 1.20m
+SEUIL_DOUBLE = 1210 
 
 uploaded_excel = st.sidebar.file_uploader("1. Base Excel", type=None)
 uploaded_pdfs = st.file_uploader("2. Charger les PDF", type="pdf", accept_multiple_files=True)
@@ -19,7 +20,7 @@ if uploaded_excel and uploaded_pdfs:
     try:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         
-        if st.button("🚀 LANCER LE CHARGEMENT CÔTE À CÔTE"):
+        if st.button("🚀 CALCULER LE MÉTRAGE (Cible 17m)"):
             all_palettes = []
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
@@ -35,62 +36,64 @@ if uploaded_excel and uploaded_pdfs:
                                     desc = str(row.get('Description', '')).lower()
                                     mat = 'fer' if 'fer' in desc else 'carton' if 'carton' in desc else 'bois' if 'bois' in desc else 'inconnu'
 
-                                    # On garde les dimensions d'origine pour ne pas fausser le métrage
-                                    long = float(row['Longueur (mm)'])
-                                    larg = float(row['Largeur (mm)'])
-
                                     for _ in range(qte):
                                         all_palettes.append({
-                                            "Ref": r, "L": long, "l": larg, "H": float(row['Hauteur (mm)']),
-                                            "Mat": mat, "Dim_Key": f"{long}x{larg}"
+                                            "Ref": r, "L": float(row['Longueur (mm)']),
+                                            "l": float(row['Largeur (mm)']), "H": float(row['Hauteur (mm)']),
+                                            "Mat": mat, "Dim_Key": f"{row['Longueur (mm)']}x{row['Largeur (mm)']}"
                                         })
                                     break
 
-            # 1. CRÉATION DES PILES (Cartons mixables / Bois mêmes dimensions)
+            # --- LOGIQUE DE GERBAGE ---
             piles = []
-            # Cartons
+            # 1. CARTONS (Mélange + Pyramide)
             cartons = sorted([p for p in all_palettes if p['Mat'] == 'carton'], key=lambda x: x['l'], reverse=True)
             while cartons:
                 base = cartons.pop(0)
-                h_act, p_refs = base['H'], [base['Ref']]
+                h, refs = base['H'], [base['Ref']]
                 i = 0
                 while i < len(cartons):
-                    if h_act + cartons[i]['H'] <= H_UTILE and cartons[i]['l'] <= base['l']:
-                        h_act += cartons[i]['H']
-                        p_refs.append(cartons.pop(i)['Ref'])
+                    if h + cartons[i]['H'] <= H_UTILE and cartons[i]['l'] <= base['l']:
+                        h += cartons[i]['H']; refs.append(cartons.pop(i)['Ref'])
                     else: i += 1
-                piles.append({"Refs": p_refs, "L": base['L'], "l": base['l'], "Mat": "carton"})
-            # Bois et Fer
-            autres = [p for p in all_palettes if p['Mat'] != 'carton']
-            for p in autres: # Simplification pour le test : bois/fer au sol
-                piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l'], "Mat": p['Mat']})
+                piles.append({"Refs": refs, "L": base['L'], "l": base['l'], "Mat": "carton"})
 
-            # 2. ALGORITHME DE RÉPARTITION CÔTE À CÔTE
-            piles_larges = [p for p in piles if p['l'] > SEUIL_DOUBLE]
-            piles_etroites = [p for p in piles if p['l'] <= SEUIL_DOUBLE]
+            # 2. BOIS (Mêmes dimensions seulement)
+            bois = [p for p in all_palettes if p['Mat'] == 'bois']
+            for dk in set(p['Dim_Key'] for p in bois):
+                grp = [p for p in bois if p['Dim_Key'] == dk]
+                while grp:
+                    base = grp.pop(0)
+                    h, refs = base['H'], [base['Ref']]
+                    i = 0
+                    while i < len(grp):
+                        if h + grp[i]['H'] <= H_UTILE:
+                            h += grp[i]['H']; refs.append(grp.pop(i)['Ref'])
+                        else: i += 1
+                    piles.append({"Refs": refs, "L": base['L'], "l": base['l'], "Mat": "bois"})
+
+            # 3. FER (Seul au sol)
+            for p in [p for p in all_palettes if p['Mat'] == 'fer']:
+                piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l'], "Mat": "fer"})
+
+            # --- CALCUL MÉTRAGE RÉEL (Double colonne) ---
+            p_larges = [p for p in piles if p['l'] > SEUIL_DOUBLE]
+            p_etroites = [p for p in piles if p['l'] <= SEUIL_DOUBLE]
             
-            # Calcul du métrage réel
-            metrage_piles_larges = sum(p['L'] for p in piles_larges)
-            
-            # Pour les étroites, on remplit deux colonnes virtuellement
+            # Les étroites sont chargées sur deux colonnes (Gauche/Droite)
             col1, col2 = 0, 0
-            for p in piles_etroites:
+            for p in p_etroites:
                 if col1 <= col2: col1 += p['L']
                 else: col2 += p['L']
-            metrage_piles_etroites = max(col1, col2)
             
-            total_mm = metrage_piles_larges + metrage_piles_etroites
+            total_mm = sum(p['L'] for p in p_larges) + max(col1, col2)
 
             st.divider()
-            st.metric("📏 MÉTRAGE LINÉAIRE FINAL", f"{total_mm / 1000:.2f} m")
+            st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_mm / 1000:.2f} m")
             
-            # 3. AFFICHAGE DES CAMIONS
-            st.info(f"Piles larges (Pleine largeur) : {len(piles_larges)} | Piles étroites (Doublables) : {len(piles_etroites)}")
-            
-            # Répartition simplifiée pour l'affichage
-            tout_le_chargement = piles_larges + piles_etroites
+            # Affichage Camions
             camions, c_act = [], {"libre": L_UTILE, "piles": []}
-            for p in tout_le_chargement:
+            for p in (p_larges + p_etroites):
                 occ = p['L'] if p['l'] > SEUIL_DOUBLE else p['L']/2
                 if occ <= c_act["libre"]:
                     c_act["piles"].append(p)
@@ -101,8 +104,9 @@ if uploaded_excel and uploaded_pdfs:
             camions.append(c_act)
 
             for idx, c in enumerate(camions, 1):
-                with st.expander(f"🚛 CAMION N°{idx}"):
-                    st.table([{"Pile": " / ".join(p['Refs']), "Largeur": p['l']} for p in c['piles']])
+                occ_m = (L_UTILE - c['libre']) / 1000
+                with st.expander(f"🚛 CAMION N°{idx} - {occ_m:.2f} m", expanded=True):
+                    st.table([{"Pile": " / ".join(p['Refs']), "Mat": p['Mat'], "Largeur": p['l']} for p in c['piles']])
 
     except Exception as e:
         st.error(f"Erreur : {e}")
