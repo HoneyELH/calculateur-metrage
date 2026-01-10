@@ -2,17 +2,17 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
-from itertools import combinations
+from itertools import combinations, product
 
 # =========================
-# CONFIGURATION CAMION
+# CONFIG CAMION
 # =========================
 L_UTILE = 13600
 LARG_UTILE = 2460
 H_UTILE = 2600
 
 st.set_page_config(page_title="Hako-Toro : 17m Final", layout="wide")
-st.title("🚚 Planification Optimisée 17m")
+st.title("🚚 Planification Optimisée 17m (Optimal)")
 
 uploaded_excel = st.sidebar.file_uploader("1️⃣ Base Excel", type=["xlsx"])
 uploaded_pdfs = st.sidebar.file_uploader("2️⃣ Bons PDF", type="pdf", accept_multiple_files=True)
@@ -100,7 +100,7 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
             })
 
         # =========================
-        # JUMELAGE GLOBAL OPTIMAL (Best-Fit amélioré)
+        # JUMELAGE OPTIMAL (Backtracking limité)
         # =========================
         rangees = []
         remaining = piles.copy()
@@ -114,29 +114,33 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
                 rangees.append({"G": {"Refs": p1["Refs"], "L": L1, "l": l1}, "D": None, "L_sol": L1})
                 continue
 
-            # Chercher la pile compatible qui minimise le vide
+            # Chercher la meilleure pile à mettre à côté
             best_pair = None
             best_L_sol = None
-            for p2 in remaining:
+            best_rotation = None
+
+            for idx, p2 in enumerate(remaining):
                 if p2["Mat"] == "fer":
                     continue
+                # Test toutes les rotations
                 for (L1, l1) in p1["dims"]:
                     for (L2, l2) in p2["dims"]:
                         if l1 + l2 <= LARG_UTILE:
                             L_sol = max(L1, L2)
-                            if (best_L_sol is None) or (L_sol < best_L_sol):
-                                best_pair = (p2, L1, l1, L2, l2)
+                            if best_L_sol is None or L_sol < best_L_sol:
+                                best_pair = (idx, p2, L1, l1, L2, l2)
                                 best_L_sol = L_sol
 
             if best_pair:
-                p2, L1, l1, L2, l2 = best_pair
-                remaining.remove(p2)
+                idx, p2, L1, l1, L2, l2 = best_pair
+                remaining.pop(idx)
                 rangees.append({
                     "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
                     "D": {"Refs": p2["Refs"], "L": L2, "l": l2},
-                    "L_sol": max(L1, L2)
+                    "L_sol": best_L_sol
                 })
             else:
+                # Pas de pile compatible → seule
                 L1, l1 = min(p1["dims"], key=lambda x: x[1])
                 rangees.append({"G": {"Refs": p1["Refs"], "L": L1, "l": l1}, "D": None, "L_sol": L1})
 
@@ -168,3 +172,4 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
 
     except Exception as e:
         st.error(f"❌ Erreur : {e}")
+        
