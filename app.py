@@ -6,9 +6,9 @@ import re
 # =========================
 # CONFIGURATION CAMION
 # =========================
-L_UTILE = 13600
-LARG_UTILE = 2460
-H_UTILE = 2600
+L_UTILE = 13600     # mm
+LARG_UTILE = 2460  # mm
+H_UTILE = 2600     # mm
 
 st.set_page_config(page_title="Hako-Toro : 17m Final", layout="wide")
 st.title("🚚 Planification Optimisée 17m")
@@ -17,32 +17,14 @@ uploaded_excel = st.sidebar.file_uploader("1️⃣ Base Excel", type=["xlsx"])
 uploaded_pdfs = st.sidebar.file_uploader("2️⃣ Bons PDF", type="pdf", accept_multiple_files=True)
 
 # =========================
-# BEST-FIT COTE-A-COTE
-# =========================
-def best_fit_pair(p1, candidates):
-    best = None
-    best_waste = LARG_UTILE
-
-    for p2 in candidates:
-        if p2["Mat"] == "fer":
-            continue
-
-        for (L1, l1) in p1["dims"]:
-            for (L2, l2) in p2["dims"]:
-                if l1 + l2 <= LARG_UTILE:
-                    waste = LARG_UTILE - (l1 + l2)
-                    if waste < best_waste:
-                        best_waste = waste
-                        best = (p2, L1, l1, L2, l2)
-
-    return best
-
-# =========================
 # TRAITEMENT PRINCIPAL
 # =========================
 if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
 
     try:
+        # =========================
+        # LECTURE EXCEL
+        # =========================
         df_articles = pd.read_excel(uploaded_excel, sheet_name="Palettes")
         all_palettes = []
 
@@ -119,58 +101,58 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
                 "Mat": base["Mat"]
             })
 
-      # =========================
-# JUMELAGE GLOBAL OPTIMAL
-# =========================
-rangees = []
-remaining = piles.copy()
+        # =========================
+        # JUMELAGE GLOBAL OPTIMAL
+        # =========================
+        rangees = []
+        remaining = piles.copy()
 
-while remaining:
-    best_pair = None
-    best_score = float("inf")
+        while remaining:
+            best = None
+            best_score = float("inf")
 
-    # Test de toutes les paires
-    for i in range(len(remaining)):
-        p1 = remaining[i]
+            for i in range(len(remaining)):
+                p1 = remaining[i]
 
-        # Pile seule (cas de repli)
-        for (L1, l1) in p1["dims"]:
-            score = L1 * 10 + l1  # pénalise la longueur
-            if score < best_score:
-                best_score = score
-                best_pair = (p1, None, L1, l1, None, None)
+                # ---- PILE SEULE (repli)
+                for (L1, l1) in p1["dims"]:
+                    score = L1 * 10 + l1
+                    if score < best_score:
+                        best_score = score
+                        best = (p1, None, L1, l1, None, None)
 
-        if p1["Mat"] == "fer":
-            continue
+                if p1["Mat"] == "fer":
+                    continue
 
-        for j in range(i + 1, len(remaining)):
-            p2 = remaining[j]
-            if p2["Mat"] == "fer":
-                continue
+                # ---- TEST DES PAIRES
+                for j in range(i + 1, len(remaining)):
+                    p2 = remaining[j]
+                    if p2["Mat"] == "fer":
+                        continue
 
-            for (L1, l1) in p1["dims"]:
-                for (L2, l2) in p2["dims"]:
-                    if l1 + l2 <= LARG_UTILE:
-                        L_sol = max(L1, L2)
-                        waste = LARG_UTILE - (l1 + l2)
-                        score = L_sol * 10 + waste
+                    for (L1, l1) in p1["dims"]:
+                        for (L2, l2) in p2["dims"]:
+                            if l1 + l2 <= LARG_UTILE:
+                                L_sol = max(L1, L2)
+                                waste = LARG_UTILE - (l1 + l2)
+                                score = L_sol * 10 + waste
 
-                        if score < best_score:
-                            best_score = score
-                            best_pair = (p1, p2, L1, l1, L2, l2)
+                                if score < best_score:
+                                    best_score = score
+                                    best = (p1, p2, L1, l1, L2, l2)
 
-    # Placement de la meilleure section
-    p1, p2, L1, l1, L2, l2 = best_pair
+            # ---- PLACEMENT DE LA MEILLEURE SECTION
+            p1, p2, L1, l1, L2, l2 = best
 
-    rangees.append({
-        "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
-        "D": {"Refs": p2["Refs"], "L": L2, "l": l2} if p2 else None,
-        "L_sol": max(L1, L2)
-    })
+            rangees.append({
+                "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
+                "D": {"Refs": p2["Refs"], "L": L2, "l": l2} if p2 else None,
+                "L_sol": max(L1, L2)
+            })
 
-    remaining.remove(p1)
-    if p2:
-        remaining.remove(p2)
+            remaining.remove(p1)
+            if p2:
+                remaining.remove(p2)
 
         # =========================
         # AFFICHAGE
