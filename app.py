@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
+from itertools import combinations
 
 # =========================
 # CONFIGURATION CAMION
@@ -99,13 +100,10 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
             })
 
         # =========================
-        # JUMELAGE GLOBAL OPTIMAL
+        # JUMELAGE GLOBAL OPTIMAL (Best-Fit amélioré)
         # =========================
         rangees = []
         remaining = piles.copy()
-
-        # Trier par largeur décroissante pour favoriser le jumelage
-        remaining.sort(key=lambda p: max(d[1] for d in p["dims"]), reverse=True)
 
         while remaining:
             p1 = remaining.pop(0)
@@ -116,16 +114,19 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
                 rangees.append({"G": {"Refs": p1["Refs"], "L": L1, "l": l1}, "D": None, "L_sol": L1})
                 continue
 
-            # Chercher une pile compatible pour jumelage
+            # Chercher la pile compatible qui minimise le vide
             best_pair = None
-            for idx, p2 in enumerate(remaining):
+            best_L_sol = None
+            for p2 in remaining:
+                if p2["Mat"] == "fer":
+                    continue
                 for (L1, l1) in p1["dims"]:
                     for (L2, l2) in p2["dims"]:
                         if l1 + l2 <= LARG_UTILE:
-                            best_pair = (p2, L1, l1, L2, l2)
-                            break
-                    if best_pair: break
-                if best_pair: break
+                            L_sol = max(L1, L2)
+                            if (best_L_sol is None) or (L_sol < best_L_sol):
+                                best_pair = (p2, L1, l1, L2, l2)
+                                best_L_sol = L_sol
 
             if best_pair:
                 p2, L1, l1, L2, l2 = best_pair
