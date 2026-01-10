@@ -4,8 +4,8 @@ import pdfplumber
 import re
 import math
 
-st.set_page_config(page_title="Hako-Toro : Stabilité Bois", layout="wide")
-st.title("🚚 Plan de Chargement (Stabilité & Compatibilité)")
+st.set_page_config(page_title="Hako-Toro : Optimisation Cartons", layout="wide")
+st.title("🚚 Plan de Chargement (Optimisation Cartons)")
 
 # --- PARAMÈTRES RÉELS ---
 L_UTILE = 13600 #
@@ -19,7 +19,7 @@ if uploaded_excel and uploaded_pdfs:
     try:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         
-        if st.button("🚀 GÉNÉRER LE PLAN"):
+        if st.button("🚀 CALCULER LE MÉTRAGE"):
             all_palettes = []
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
@@ -39,48 +39,54 @@ if uploaded_excel and uploaded_pdfs:
                                         all_palettes.append({
                                             "Ref": r, "L": float(row['Longueur (mm)']),
                                             "l": float(row['Largeur (mm)']), "H": float(row['Hauteur (mm)']),
-                                            "Matiere": matiere, "Ligne_Excel": idx # Identifiant de la ligne Excel
+                                            "Mat": matiere, "Ligne_Excel": idx
                                         })
                                     break
 
-            # LOGIQUE DE GERBAGE AVANCÉE
             piles = []
-            # On groupe par ligne Excel pour respecter votre consigne de compatibilité
-            lignes_uniques = set(p['Ligne_Excel'] for p in all_palettes)
             
-            for l_idx in lignes_uniques:
-                groupe = [p for p in all_palettes if p['Ligne_Excel'] == l_idx]
-                matiere = groupe[0]['Matiere']
+            # --- 1. GESTION DES CARTONS (Mélange autorisé + Pyramide) ---
+            cartons = [p for p in all_palettes if p['Mat'] == 'carton']
+            cartons = sorted(cartons, key=lambda x: x['l'], reverse=True) # Largeur max en bas
+            while cartons:
+                base = cartons.pop(0)
+                h_actuelle, p_refs = base['H'], [base['Ref']]
+                i = 0
+                while i < len(cartons):
+                    if h_actuelle + cartons[i]['H'] <= H_UTILE and cartons[i]['l'] <= base['l']:
+                        h_actuelle += cartons[i]['H']
+                        p_refs.append(cartons.pop(i)['Ref'])
+                    else: i += 1
+                piles.append({"Refs": p_refs, "L": base['L'], "l": base['l'], "Mat": "carton"})
 
-                if matiere == 'fer':
-                    for p in groupe: piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l'], "Mat": matiere})
-                else:
-                    # Pour le bois, on trie par largeur décroissante pour mettre la plus large en bas
-                    if matiere == 'bois':
-                        groupe = sorted(groupe, key=lambda x: x['l'], reverse=True)
-                    
-                    while groupe:
-                        base = groupe.pop(0)
-                        h_actuelle = base['H']
-                        p_refs = [base['Ref']]
-                        i = 0
-                        while i < len(groupe):
-                            # Condition : Hauteur OK + (Si bois, la largeur du haut doit être <= largeur du bas)
-                            largeur_ok = (groupe[i]['l'] <= base['l']) if matiere == 'bois' else True
-                            
-                            if h_actuelle + groupe[i]['H'] <= H_UTILE and largeur_ok:
-                                h_actuelle += groupe[i]['H']
-                                p_refs.append(groupe.pop(i)['Ref'])
-                            else: i += 1
-                        piles.append({"Refs": p_refs, "L": base['L'], "l": base['l'], "Mat": matiere})
+            # --- 2. GESTION DU BOIS (Même ligne uniquement + Pyramide) ---
+            bois = [p for p in all_palettes if p['Mat'] == 'bois']
+            lignes_bois = set(p['Ligne_Excel'] for p in bois)
+            for l_idx in lignes_bois:
+                groupe = sorted([p for p in bois if p['Ligne_Excel'] == l_idx], key=lambda x: x['l'], reverse=True)
+                while groupe:
+                    base = groupe.pop(0)
+                    h_actuelle, p_refs = base['H'], [base['Ref']]
+                    i = 0
+                    while i < len(groupe):
+                        if h_actuelle + groupe[i]['H'] <= H_UTILE and groupe[i]['l'] <= base['l']:
+                            h_actuelle += groupe[i]['H']
+                            p_refs.append(groupe.pop(i)['Ref'])
+                        else: i += 1
+                    piles.append({"Refs": p_refs, "L": base['L'], "l": base['l'], "Mat": "bois"})
 
-            # CALCUL MÉTRAGE ET CAMIONS
+            # --- 3. GESTION DU FER (Jamais empilé) ---
+            fer = [p for p in all_palettes if p['Mat'] == 'fer']
+            for p in fer:
+                piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l'], "Mat": "fer"})
+
+            # --- AFFICHAGE ---
             total_mm = sum([p['L'] if p['l'] > SEUIL_LARGEUR_PLEINE else p['L']/2 for p in piles])
             st.divider()
             st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_mm / 1000:.2f} m")
             
-            camions = []
-            c_actuel = {"libre": L_UTILE, "piles": []}
+            # Répartition Camions
+            camions, c_actuel = [], {"libre": L_UTILE, "piles": []}
             for p in piles:
                 lg_sol = p['L'] if p['l'] > SEUIL_LARGEUR_PLEINE else p['L']/2
                 if lg_sol <= c_actuel["libre"]:
