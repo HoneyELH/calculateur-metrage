@@ -71,6 +71,7 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
         while all_palettes:
             base = all_palettes.pop(0)
 
+            # FER → pile seule
             if base["Mat"] == "fer":
                 piles.append({
                     "Refs": [base["Ref"]],
@@ -79,10 +80,10 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
                 })
                 continue
 
+            # Empilement carton/bois
             h = base["H"]
             refs = [base["Ref"]]
             i = 0
-
             while i < len(all_palettes):
                 p = all_palettes[i]
                 if p["Ref"] == base["Ref"] and h + p["H"] <= H_UTILE:
@@ -103,66 +104,40 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
         rangees = []
         remaining = piles.copy()
 
+        # Trier par largeur décroissante pour favoriser le jumelage
+        remaining.sort(key=lambda p: max(d[1] for d in p["dims"]), reverse=True)
+
         while remaining:
-            best = None
-            best_score = float("inf")
+            p1 = remaining.pop(0)
 
-            for i in range(len(remaining)):
-                p1 = remaining[i]
+            # FER → pile seule
+            if p1["Mat"] == "fer":
+                L1, l1 = min(p1["dims"], key=lambda x: x[1])
+                rangees.append({"G": {"Refs": p1["Refs"], "L": L1, "l": l1}, "D": None, "L_sol": L1})
+                continue
 
-                # --- PILE SEULE
+            # Chercher une pile compatible pour jumelage
+            best_pair = None
+            for idx, p2 in enumerate(remaining):
                 for (L1, l1) in p1["dims"]:
-                    score = L1 * 10 + l1
-                    if score < best_score:
-                        best_score = score
-                        best = {
-                            "p1": p1,
-                            "p2": None,
-                            "L1": L1,
-                            "l1": l1,
-                            "L2": 0,
-                            "l2": 0,
-                            "L_sol": L1
-                        }
+                    for (L2, l2) in p2["dims"]:
+                        if l1 + l2 <= LARG_UTILE:
+                            best_pair = (p2, L1, l1, L2, l2)
+                            break
+                    if best_pair: break
+                if best_pair: break
 
-                if p1["Mat"] == "fer":
-                    continue
-
-                # --- JUMELAGE
-                for j in range(i + 1, len(remaining)):
-                    p2 = remaining[j]
-                    if p2["Mat"] == "fer":
-                        continue
-
-                    for (L1, l1) in p1["dims"]:
-                        for (L2, l2) in p2["dims"]:
-                            if l1 + l2 <= LARG_UTILE:
-                                L_sol = max(L1, L2)
-                                waste = LARG_UTILE - (l1 + l2)
-                                score = L_sol * 10 + waste
-
-                                if score < best_score:
-                                    best_score = score
-                                    best = {
-                                        "p1": p1,
-                                        "p2": p2,
-                                        "L1": L1,
-                                        "l1": l1,
-                                        "L2": L2,
-                                        "l2": l2,
-                                        "L_sol": L_sol
-                                    }
-
-            # --- PLACEMENT
-            rangees.append({
-                "G": {"Refs": best["p1"]["Refs"], "L": best["L1"], "l": best["l1"]},
-                "D": {"Refs": best["p2"]["Refs"], "L": best["L2"], "l": best["l2"]} if best["p2"] else None,
-                "L_sol": best["L_sol"]
-            })
-
-            remaining.remove(best["p1"])
-            if best["p2"]:
-                remaining.remove(best["p2"])
+            if best_pair:
+                p2, L1, l1, L2, l2 = best_pair
+                remaining.remove(p2)
+                rangees.append({
+                    "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
+                    "D": {"Refs": p2["Refs"], "L": L2, "l": l2},
+                    "L_sol": max(L1, L2)
+                })
+            else:
+                L1, l1 = min(p1["dims"], key=lambda x: x[1])
+                rangees.append({"G": {"Refs": p1["Refs"], "L": L1, "l": l1}, "D": None, "L_sol": L1})
 
         # =========================
         # AFFICHAGE
@@ -185,8 +160,7 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
             droite = " / ".join(r["D"]["Refs"]) if r["D"] else "VIDE"
 
             st.write(
-                f"🚛 Camion {cam_num} | "
-                f"Section {r['L_sol']} mm | "
+                f"🚛 Camion {cam_num} | Section {r['L_sol']} mm | "
                 f"Gauche : {gauche} ({r['G']['l']} mm) | "
                 f"Droite : {droite}"
             )
