@@ -4,107 +4,98 @@ import pdfplumber
 import re
 import math
 
-st.set_page_config(page_title="Hako-Toro : Organisateur Universel", layout="wide")
-st.title("🚚 Planificateur de Chargement Multi-Bons")
+st.set_page_config(page_title="Hako-Toro : Optimisation Totale", layout="wide")
+st.title("🚚 Planificateur de Chargement avec Gerbage Mixte")
 
-# --- CONFIGURATION FIXE ---
-L_UTILE = 13600  # Longueur semi (mm)
-H_UTILE = 2700   # Hauteur utile (mm)
-SEUIL_LARGEUR_PLEINE = 1100 # Seuil pour bloquer une rangée complète (mm)
+# --- CONFIGURATION ---
+L_UTILE = 13600  
+H_UTILE = 2700   
+SEUIL_LARGEUR_PLEINE = 1100 
 
-st.sidebar.header("1. Configuration")
 uploaded_excel = st.sidebar.file_uploader("Base Excel (Palettes)", type=None)
-uploaded_pdfs = st.file_uploader("2. Charger TOUS les PDF", type="pdf", accept_multiple_files=True)
+uploaded_pdfs = st.file_uploader("Charger les PDF", type="pdf", accept_multiple_files=True)
 
 if uploaded_excel and uploaded_pdfs:
     try:
-        # Lecture de la base
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
-        st.sidebar.success(f"✅ {len(df_articles)} références chargées")
         
-        if st.button("🚀 GÉNÉRER LE PLAN DE CHARGEMENT"):
-            toutes_les_tranches = []
+        if st.button("🚀 GÉNÉRER LE PLAN OPTIMISÉ"):
+            liste_unitaire_palettes = []
 
-            # --- ANALYSE DE CHAQUE BON ---
+            # 1. EXTRACTION DE CHAQUE PALETTE INDIVIDUELLE
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
                     texte = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
                     lignes = texte.split('\n')
-
                     for ligne in lignes:
                         for _, row in df_articles.iterrows():
-                            # Gestion des références multiples (74677 / 74679...)
                             liste_refs = [r.strip() for r in str(row['Référence']).split('/')]
-                            
                             for ref_solo in liste_refs:
                                 if len(ref_solo) > 3 and ref_solo in ligne:
-                                    # Extraction Quantité
                                     nombres = re.findall(r'\b\d+\b', ligne)
                                     qte = 1
                                     if nombres:
                                         val = nombres[-1]
                                         qte = int(nombres[-2]) if val == ref_solo and len(nombres) > 1 else int(val)
-
-                                    # Dimensions
-                                    long_p = float(row['Longueur (mm)'])
-                                    larg_p = float(row['Largeur (mm)'])
-                                    haut_p = float(row['Hauteur (mm)'])
-                                    empilable = str(row.get('Empilable', 'Oui')).strip().lower() == 'oui'
-
-                                    # 1. Calcul du gerbage (Hauteur)
-                                    nb_etages = max(1, math.floor(H_UTILE / haut_p)) if empilable else 1
-                                    nb_places_sol = math.ceil(qte / nb_etages)
-
-                                    # 2. Calcul du métrage (Largeur)
-                                    # Règle : Si > 1100mm, prend toute la largeur du camion
-                                    if larg_p > SEUIL_LARGEUR_PLEINE:
-                                        metrage_item = nb_places_sol * long_p
-                                        note = "Pleine Largeur"
-                                    else:
-                                        metrage_item = (nb_places_sol * long_p) / 2
-                                        note = "Demi-Largeur"
-
-                                    # On ajoute chaque lot à la liste globale
-                                    toutes_les_tranches.append({
-                                        "Ref": ref_solo,
-                                        "Libellé": f"{ref_solo} ({note})",
-                                        "Longueur": metrage_item,
-                                        "Détail": f"Lot de {qte} (sur {nb_places_sol} place(s) au sol)"
-                                    })
+                                    
+                                    # Pour chaque unité commandée, on crée une "palette" virtuelle
+                                    for _ in range(qte):
+                                        liste_unitaire_palettes.append({
+                                            "Ref": ref_solo,
+                                            "L": float(row['Longueur (mm)']),
+                                            "l": float(row['Largeur (mm)']),
+                                            "H": float(row['Hauteur (mm)']),
+                                            "Empilable": str(row.get('Empilable', 'Oui')).strip().lower() == 'oui'
+                                        })
                                     break
 
-            # --- RÉPARTITION DANS LES CAMIONS ---
-            if toutes_les_tranches:
-                camions = []
-                camion_actuel = {"libre": L_UTILE, "articles": [], "occupé": 0}
+            # 2. LOGIQUE DE GERBAGE MIXTE (Empiler des refs différentes)
+            # On sépare les empilables des non-empilables
+            empilables = [p for p in liste_unitaire_palettes if p['Empilable']]
+            non_empilables = [p for p in liste_unitaire_palettes if not p['Empilable']]
+            
+            piles_finales = [] # Liste de "colonnes" de palettes
 
-                for item in toutes_les_tranches:
-                    if item["Longueur"] <= camion_actuel["libre"]:
-                        camion_actuel["articles"].append(item)
-                        camion_actuel["occupé"] += item["Longueur"]
-                        camion_actuel["libre"] -= item["Longueur"]
-                    else:
-                        camions.append(camion_actuel)
-                        camion_actuel = {"libre": L_UTILE - item["Longueur"], "articles": [item], "occupé": item["Longueur"]}
-                camions.append(camion_actuel)
-
-                # --- AFFICHAGE FINAL ---
-                st.divider()
-                m_total = sum(i["Longueur"] for i in toutes_les_tranches) / 1000
+            # On crée des piles avec les empilables
+            while empilables:
+                base = empilables.pop(0)
+                hauteur_actuelle = base['H']
+                pile = [base['Ref']]
                 
-                col1, col2 = st.columns(2)
-                col1.metric("Métrage Linéaire TOTAL", f"{m_total:.2f} m")
-                col2.metric("Camions nécessaires (13.6m)", len(camions))
+                # On essaie d'ajouter d'autres articles sur la pile
+                i = 0
+                while i < len(empilables):
+                    if hauteur_actuelle + empilables[i]['H'] <= H_UTILE:
+                        hauteur_actuelle += empilables[i]['H']
+                        pile.append(empilables.pop(i)['Ref'])
+                    else:
+                        i += 1
+                piles_finales.append({"Refs": pile, "L": base['L'], "l": base['l']})
 
-                st.subheader("📋 Quel article mettre dans quel camion ?")
-                for i, cam in enumerate(camions, 1):
-                    with st.expander(f"🚛 CAMION N°{i} - Occupation : {cam['occupé']/1000:.2f} m / 13.6 m", expanded=True):
-                        # Regrouper pour la lisibilité
-                        df_cam = pd.DataFrame(cam["articles"])
-                        inventaire = df_cam.groupby(['Libellé', 'Détail']).size().reset_index(name='Nombre de rangées')
-                        st.table(inventaire)
-            else:
-                st.error("Aucune correspondance trouvée entre vos PDF et votre Excel.")
+            # On ajoute les non-empilables (1 par pile)
+            for p in non_empilables:
+                piles_finales.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l']})
+
+            # 3. CALCUL DU MÉTRAGE (Largeur)
+            total_mm = 0
+            for pile in piles_finales:
+                if pile['l'] > SEUIL_LARGEUR_PLEINE:
+                    total_mm += pile['L']
+                else:
+                    total_mm += (pile['L'] / 2)
+
+            # 4. AFFICHAGE
+            st.divider()
+            m_total = total_mm / 1000
+            st.metric("Métrage Linéaire TOTAL (Gerbage mixte inclus)", f"{m_total:.2f} m")
+            
+            st.subheader("📦 Composition des piles de chargement")
+            # Affichage simplifié des piles pour les collègues
+            df_piles = pd.DataFrame([
+                {"Contenu de la pile": " / ".join(p['Refs']), "Longueur au sol (mm)": p['L']} 
+                for p in piles_finales
+            ])
+            st.table(df_piles)
 
     except Exception as e:
-        st.error(f"Erreur technique : {e}")
+        st.error(f"Erreur : {e}")
