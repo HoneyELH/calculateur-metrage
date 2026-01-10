@@ -3,87 +3,188 @@ import pandas as pd
 import pdfplumber
 import re
 
-st.set_page_config(page_title="Hako-Toro : 17m Final", layout="wide")
-st.title("🚚 Planification Optimisée 17m")
+# =========================
+# CONFIGURATION CAMION
+# =========================
+L_UTILE = 13600     # mm
+LARG_UTILE = 2460  # mm
+H_UTILE = 2600     # mm
 
-L_UTILE = 13600  
-LARG_UTILE = 2460 
-H_UTILE = 2600   
+st.set_page_config(page_title="Hako-Toro", layout="wide")
+st.title("🚚 Planification Optimisée")
 
-uploaded_excel = st.sidebar.file_uploader("1. Base Excel", type=None)
-uploaded_pdfs = st.file_uploader("2. Charger les PDF", type="pdf", accept_multiple_files=True)
+uploaded_excel = st.sidebar.file_uploader("1️⃣ Base Excel", type=["xlsx"])
+uploaded_pdfs = st.sidebar.file_uploader("2️⃣ Bons PDF", type="pdf", accept_multiple_files=True)
 
-if uploaded_excel and uploaded_pdfs:
+# =========================
+# FONCTION BEST-FIT
+# =========================
+def best_fit_pair(p1, candidates, largeur_max):
+    best = None
+    best_waste = largeur_max
+
+    for p2 in candidates:
+        for (L1, l1) in p1['dims']:
+            for (L2, l2) in p2['dims']:
+                if l1 + l2 <= largeur_max:
+                    waste = largeur_max - (l1 + l2)
+                    if waste < best_waste:
+                        best_waste = waste
+                        best = (p2, L1, l1, L2, l2)
+
+    return best
+
+
+# =========================
+# TRAITEMENT
+# =========================
+if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
+
     try:
-        df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
-        
-        if st.button("🚀 GÉNÉRER LE PLAN 17M"):
-            all_palettes = []
-            for pdf_file in uploaded_pdfs:
-                with pdfplumber.open(pdf_file) as pdf:
-                    texte = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-                    for ligne in texte.split('\n'):
-                        for idx, row in df_articles.iterrows():
-                            refs = [r.strip() for r in str(row['Référence']).split('/')]
-                            for r in refs:
-                                if len(r) > 3 and r in ligne:
-                                    n = re.findall(r'\b\d+\b', ligne)
-                                    qte = int(n[-2]) if n and n[-1] == r and len(n)>1 else int(n[-1]) if n else 1
-                                    
-                                    desc = str(row.get('Description', '')).lower()
-                                    mat = 'fer' if 'fer' in desc else 'carton' if 'carton' in desc else 'bois' if 'bois' in desc else 'inconnu'
+        df_articles = pd.read_excel(uploaded_excel, sheet_name="Palettes")
+        all_palettes = []
 
-                                    for _ in range(qte):
-                                        all_palettes.append({
-                                            "Ref": r, 
-                                            "d1": float(row['Longueur (mm)']),
-                                            "d2": float(row['Largeur (mm)']), 
-                                            "H": float(row['Hauteur (mm)']), 
-                                            "Mat": mat
-                                        })
-                                    break
+        # =========================
+        # LECTURE PDF
+        # =========================
+        for pdf_file in uploaded_pdfs:
+            with pdfplumber.open(pdf_file) as pdf:
+                texte = "\n".join(
+                    p.extract_text() for p in pdf.pages if p.extract_text()
+                )
 
-            # 1. GERBAGE (Vertical)
-            piles = []
-            all_palettes = sorted(all_palettes, key=lambda x: (x['Mat'], x['Ref']))
-            while all_palettes:
-                base = all_palettes.pop(0)
-                h_act = base['H']; p_refs = [base['Ref']]
-                i = 0
-                while i < len(all_palettes):
-                    if all_palettes[i]['Ref'] == base['Ref'] and (h_act + all_palettes[i]['H'] <= H_UTILE):
-                        h_act += all_palettes[i]['H']; p_refs.append(all_palettes.pop(i)['Ref'])
-                    else: i += 1
-                # On définit une orientation par défaut (petite largeur pour doubler)
-                piles.append({"Refs": p_refs, "L": max(base['d1'], base['d2']), "l": min(base['d1'], base['d2']), "Mat": base['Mat']})
+            for ligne in texte.split("\n"):
+                for _, row in df_articles.iterrows():
+                    refs = [r.strip() for r in str(row["Référence"]).split("/")]
+                    for r in refs:
+                        if len(r) > 3 and r in ligne:
+                            n = re.findall(r"\b\d+\b", ligne)
+                            qte = int(n[-1]) if n else 1
 
-            # 2. JUMELAGE (Horizontal) - C'est ici qu'on gagne les 3 mètres manquants
-            piles = sorted(piles, key=lambda x: x['L'], reverse=True)
-            rangees, used = [], [False] * len(piles)
-            
-            for i in range(len(piles)):
-                if used[i]: continue
-                p1 = piles[i]
-                used[i] = True
-                p2 = None
-                
-                # On cherche une pile à mettre à côté
-                for j in range(i + 1, len(piles)):
-                    if not used[j] and (p1['l'] + piles[j]['l'] <= LARG_UTILE):
-                        p2 = piles[j]; used[j] = True; break
-                
-                rangees.append({"G": p1, "D": p2, "L_sol": max(p1['L'], p2['L'] if p2 else 0)})
+                            desc = str(row.get("Description", "")).lower()
+                            if "fer" in desc:
+                                mat = "fer"
+                            elif "carton" in desc:
+                                mat = "carton"
+                            elif "bois" in desc:
+                                mat = "bois"
+                            else:
+                                mat = "inconnu"
 
-            # 3. AFFICHAGE
-            total_m = sum(r['L_sol'] for r in rangees)
-            st.header(f"📏 MÉTRAGE LINÉAIRE TOTAL : {total_m / 1000:.2f} m")
+                            for _ in range(qte):
+                                all_palettes.append({
+                                    "Ref": r,
+                                    "d1": float(row["Longueur (mm)"]),
+                                    "d2": float(row["Largeur (mm)"]),
+                                    "H": float(row["Hauteur (mm)"]),
+                                    "Mat": mat
+                                })
+                            break
 
-            curr_L, cam_num = 0, 1
-            for r in rangees:
-                if curr_L + r['L_sol'] > L_UTILE:
-                    cam_num += 1; curr_L = r['L_sol']; st.divider()
-                else: curr_L += r['L_sol']
-                st.write(f"🚛 Camion {cam_num} | Section {r['L_sol']}mm | G: {' / '.join(r['G']['Refs'])} ({r['G']['l']}mm) | D: {(' / '.join(r['D']['Refs']) + ' (' + str(r['D']['l']) + 'mm)') if r['D'] else 'VIDE'}")
+        # =========================
+        # GERBAGE VERTICAL
+        # =========================
+        piles = []
+        all_palettes.sort(key=lambda x: (x["Mat"], x["Ref"]))
+
+        while all_palettes:
+            base = all_palettes.pop(0)
+
+            # FER → pile seule
+            if base["Mat"] == "fer":
+                piles.append({
+                    "Refs": [base["Ref"]],
+                    "dims": [(base["d1"], base["d2"]), (base["d2"], base["d1"])],
+                    "Mat": "fer"
+                })
+                continue
+
+            h = base["H"]
+            refs = [base["Ref"]]
+            i = 0
+
+            while i < len(all_palettes):
+                p = all_palettes[i]
+                if (
+                    p["Ref"] == base["Ref"]
+                    and h + p["H"] <= H_UTILE
+                ):
+                    h += p["H"]
+                    refs.append(all_palettes.pop(i)["Ref"])
+                else:
+                    i += 1
+
+            piles.append({
+                "Refs": refs,
+                "dims": [(base["d1"], base["d2"]), (base["d2"], base["d1"])],
+                "Mat": base["Mat"]
+            })
+
+        # =========================
+        # JUMELAGE BEST-FIT
+        # =========================
+        piles.sort(key=lambda p: max(d[0] for d in p["dims"]), reverse=True)
+        used = [False] * len(piles)
+        rangees = []
+
+        for i, p1 in enumerate(piles):
+            if used[i]:
+                continue
+
+            used[i] = True
+            remaining = [
+                piles[j] for j in range(i + 1, len(piles)) if not used[j]
+            ]
+
+            best = best_fit_pair(p1, remaining, LARG_UTILE)
+
+            if best:
+                p2, L1, l1, L2, l2 = best
+                j = piles.index(p2)
+                used[j] = True
+
+                rangees.append({
+                    "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
+                    "D": {"Refs": p2["Refs"], "L": L2, "l": l2},
+                    "L_sol": max(L1, L2)
+                })
+            else:
+                # pile seule
+                L1, l1 = max(p1["dims"], key=lambda x: x[1])
+                rangees.append({
+                    "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
+                    "D": None,
+                    "L_sol": L1
+                })
+
+        # =========================
+        # AFFICHAGE
+        # =========================
+        total_mm = sum(r["L_sol"] for r in rangees)
+        st.header(f"📏 MÉTRAGE LINÉAIRE TOTAL : {total_mm / 1000:.2f} m")
+
+        curr_L = 0
+        cam_num = 1
+
+        for r in rangees:
+            if curr_L + r["L_sol"] > L_UTILE:
+                st.divider()
+                cam_num += 1
+                curr_L = 0
+
+            curr_L += r["L_sol"]
+
+            gauche = " / ".join(r["G"]["Refs"])
+            droite = (
+                " / ".join(r["D"]["Refs"]) if r["D"] else "VIDE"
+            )
+
+            st.write(
+                f"🚛 **Camion {cam_num}** | "
+                f"Section {r['L_sol']} mm | "
+                f"Gauche: {gauche} ({r['G']['l']} mm) | "
+                f"Droite: {droite}"
+            )
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"❌ Erreur : {e}")
