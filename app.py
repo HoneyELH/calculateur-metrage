@@ -5,9 +5,9 @@ import re
 import math
 
 st.set_page_config(page_title="Hako-Toro : Plan de Chargement", layout="wide")
-st.title("🚛 Répartition des Articles par Camion")
+st.title("🚚 Optimisation de Chargement")
 
-# --- PARAMÈTRES FIXES ---
+# --- PARAMÈTRES RÉELS ---
 L_UTILE = 13600  # 13.6m
 H_UTILE = 2600   # Hauteur 2.6m
 SEUIL_LARGEUR_PLEINE = 1100 
@@ -19,7 +19,7 @@ if uploaded_excel and uploaded_pdfs:
     try:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         
-        if st.button("📦 GÉNÉRER LES PLANS DE CAMION"):
+        if st.button("🚀 GÉNÉRER LE PLAN"):
             all_palettes = []
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
@@ -57,7 +57,16 @@ if uploaded_excel and uploaded_pdfs:
             for p in n_emp:
                 piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l']})
 
-            # 2. RÉPARTITION DANS LES CAMIONS (Max 13.6m)
+            # 2. CALCUL DU MÉTRAGE TOTAL
+            total_metrage_mm = sum([p['L'] if p['l'] > SEUIL_LARGEUR_PLEINE else p['L']/2 for p in piles])
+            
+            # --- AFFICHAGE DU MÉTRAGE GLOBAL ---
+            st.divider()
+            st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_metrage_mm / 1000:.2f} m")
+            st.info(f"Capacité d'un camion : {L_UTILE/1000} m. Nombre de véhicules estimés : {math.ceil(total_metrage_mm / L_UTILE)}")
+            st.divider()
+
+            # 3. RÉPARTITION DANS LES CAMIONS
             camions = []
             c_actuel = {"libre": L_UTILE, "piles": []}
             for p in piles:
@@ -70,14 +79,19 @@ if uploaded_excel and uploaded_pdfs:
                     c_actuel = {"libre": L_UTILE - longueur_sol, "piles": [p]}
             camions.append(c_actuel)
 
-            # 3. AFFICHAGE DES CAMIONS
+            # 4. AFFICHAGE DÉTAILLÉ PAR CAMION
+            st.subheader("📋 Répartition par véhicule")
             for idx, c in enumerate(camions, 1):
                 occ = (L_UTILE - c['libre']) / 1000
-                with st.expander(f"🚛 CAMION N°{idx} - Occupation : {occ:.2f} m / 13.60 m", expanded=True):
-                    # Inventaire simplifié pour le chargement
+                with st.expander(f"🚛 CAMION N°{idx} - Occupation : {occ:.2f} m", expanded=True):
                     data = []
                     for p in c['piles']:
-                        data.append({"Pile (Bas vers Haut)": " ⬆️ ".join(p['Refs']), "Longueur sol": f"{p['L']} mm"})
+                        data.append({
+                            "Contenu de la pile (Bas ⬆️ Haut)": " / ".join(p['Refs']), 
+                            "Longueur au sol": f"{p['L']} mm",
+                            "Type": "Pleine Largeur" if p['l'] > SEUIL_LARGEUR_PLEINE else "Demi-Largeur"
+                        })
                     st.table(pd.DataFrame(data))
+
     except Exception as e:
         st.error(f"Erreur : {e}")
