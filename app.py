@@ -3,8 +3,8 @@ import pandas as pd
 import pdfplumber
 import re
 
-st.set_page_config(page_title="Hako-Toro : 17m Fix", layout="wide")
-st.title("🚚 Plan de Chargement (Optimisation Côte à Côte)")
+st.set_page_config(page_title="Hako-Toro : 17m Final", layout="wide")
+st.title("🚚 Plan de Chargement Optimisé (Cible 17m)")
 
 # --- CONFIGURATION CAMION ---
 L_UTILE = 13600  #
@@ -18,7 +18,7 @@ if uploaded_excel and uploaded_pdfs:
     try:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         
-        if st.button("🚀 GÉNÉRER LE PLAN 17M"):
+        if st.button("🚀 CALCULER LE PLAN (PIVOT AUTO)"):
             all_palettes = []
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
@@ -34,17 +34,24 @@ if uploaded_excel and uploaded_pdfs:
                                     desc = str(row.get('Description', '')).lower()
                                     mat = 'fer' if 'fer' in desc else 'carton' if 'carton' in desc else 'bois' if 'bois' in desc else 'inconnu'
 
+                                    # --- LOGIQUE DE PIVOT ---
+                                    # On définit 'l' (largeur au sol) comme la plus petite des deux dimensions
+                                    # pour maximiser les chances de mettre deux palettes de front.
+                                    d1 = float(row['Longueur (mm)'])
+                                    d2 = float(row['Largeur (mm)'])
+                                    longueur_physique = max(d1, d2)
+                                    largeur_physique = min(d1, d2)
+
                                     for _ in range(qte):
                                         all_palettes.append({
-                                            "Ref": r, "L": float(row['Longueur (mm)']),
-                                            "l": float(row['Largeur (mm)']), "H": float(row['Hauteur (mm)']),
-                                            "Mat": mat, "Dim": f"{row['Longueur (mm)']}x{row['Largeur (mm)']}"
+                                            "Ref": r, "L": longueur_physique, "l": largeur_physique, 
+                                            "H": float(row['Hauteur (mm)']), "Mat": mat, "Dim": f"{longueur_physique}x{largeur_physique}"
                                         })
                                     break
 
             # 1. FORMATION DES PILES (Vertical)
             piles = []
-            # Cartons
+            # Cartons : Mélange autorisé + Pyramide
             cartons = sorted([p for p in all_palettes if p['Mat'] == 'carton'], key=lambda x: x['l'], reverse=True)
             while cartons:
                 base = cartons.pop(0)
@@ -55,67 +62,48 @@ if uploaded_excel and uploaded_pdfs:
                         h += cartons[i]['H']; refs.append(cartons.pop(i)['Ref'])
                     else: i += 1
                 piles.append({"Refs": refs, "L": base['L'], "l": base['l'], "Mat": "carton"})
-            # Bois (Même dimensions)
+
+            # Bois : Mêmes dimensions uniquement
             bois = [p for p in all_palettes if p['Mat'] == 'bois']
             for dk in set(p['Dim'] for p in bois):
                 grp = [p for p in bois if p['Dim'] == dk]
                 while grp:
-                    base = grp.pop(0)
-                    h, refs = base['H'], [base['Ref']]
-                    i = 0
+                    base = grp.pop(0); h, refs = base['H'], [base['Ref']]; i = 0
                     while i < len(grp):
                         if h + grp[i]['H'] <= H_UTILE:
                             h += grp[i]['H']; refs.append(grp.pop(i)['Ref'])
                         else: i += 1
                     piles.append({"Refs": refs, "L": base['L'], "l": base['l'], "Mat": "bois"})
+            
             # Fer
             for p in [p for p in all_palettes if p['Mat'] == 'fer']:
                 piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l'], "Mat": "fer"})
 
-            # 2. JUMELAGE RÉEL (Horizontal)
+            # 2. JUMELAGE (Horizontal)
             piles = sorted(piles, key=lambda x: x['L'], reverse=True)
-            rangées = []
-            utilisés = [False] * len(piles)
-
+            rangees, uses = [], [False] * len(piles)
             for i in range(len(piles)):
-                if utilisés[i]: continue
-                p1 = piles[i]
-                utilisés[i] = True
-                paire_trouvée = None
-                
-                # Chercher une pile pour mettre à côté
+                if uses[i]: continue
+                p1 = piles[i]; uses[i] = True; p2 = None
                 for j in range(i + 1, len(piles)):
-                    if not utilisés[j] and (p1['l'] + piles[j]['l']) <= LARG_UTILE:
-                        paire_trouvée = piles[j]
-                        utilisés[j] = True
-                        break
-                
-                rangées.append({
-                    "G": p1, 
-                    "D": paire_trouvée, 
-                    "L_sol": max(p1['L'], paire_trouvée['L']) if paire_trouvée else p1['L']
-                })
+                    if not uses[j] and (p1['l'] + piles[j]['l']) <= LARG_UTILE:
+                        p2 = piles[j]; uses[j] = True; break
+                rangees.append({"G": p1, "D": p2, "L_sol": max(p1['L'], p2['L']) if p2 else p1['L']})
 
-            # 3. RÉPARTITION CAMIONS
-            total_metrage = sum(r['L_sol'] for r in rangées)
-            st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_metrage / 1000:.2f} m")
+            # 3. AFFICHAGE
+            total_m = sum(r['L_sol'] for r in rangees)
+            st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_m / 1000:.2f} m")
 
-            current_L = 0
-            cam_num = 1
-            for r in rangées:
-                if current_L + r['L_sol'] > L_UTILE:
-                    cam_num += 1
-                    current_L = r['L_sol']
-                else:
-                    current_L += r['L_sol']
+            curr_L, cam_num = 0, 1
+            for r in rangees:
+                if curr_L + r['L_sol'] > L_UTILE:
+                    cam_num += 1; curr_L = r['L_sol']; st.divider()
+                else: curr_L += r['L_sol']
                 
-                with st.expander(f"🚛 CAMION N°{cam_num} | Section de {r['L_sol']} mm"):
-                    col_g, col_d = st.columns(2)
-                    col_g.markdown(f"**GAUCHE** : {' / '.join(r['G']['Refs'])} ({r['G']['l']}mm)")
-                    if r['D']:
-                        col_d.markdown(f"**DROITE** : {' / '.join(r['D']['Refs'])} ({r['D']['l']}mm)")
-                    else:
-                        col_d.write("VIDE")
+                with st.expander(f"🚛 CAMION N°{cam_num} | Section {r['L_sol']}mm"):
+                    c1, c2 = st.columns(2)
+                    c1.write(f"GAUCHE: {' / '.join(r['G']['Refs'])} ({r['G']['l']}mm)")
+                    if r['D']: c2.write(f"DROITE: {' / '.join(r['D']['Refs'])} ({r['D']['l']}mm)")
 
     except Exception as e:
         st.error(f"Erreur : {e}")
