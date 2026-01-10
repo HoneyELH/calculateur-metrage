@@ -6,37 +6,39 @@ import re
 # =========================
 # CONFIGURATION CAMION
 # =========================
-L_UTILE = 13600     # mm
-LARG_UTILE = 2460  # mm
-H_UTILE = 2600     # mm
+L_UTILE = 13600
+LARG_UTILE = 2460
+H_UTILE = 2600
 
-st.set_page_config(page_title="Hako-Toro", layout="wide")
-st.title("🚚 Planification Optimisée")
+st.set_page_config(page_title="Hako-Toro : 17m Final", layout="wide")
+st.title("🚚 Planification Optimisée 17m")
 
 uploaded_excel = st.sidebar.file_uploader("1️⃣ Base Excel", type=["xlsx"])
 uploaded_pdfs = st.sidebar.file_uploader("2️⃣ Bons PDF", type="pdf", accept_multiple_files=True)
 
 # =========================
-# FONCTION BEST-FIT
+# BEST-FIT COTE-A-COTE
 # =========================
-def best_fit_pair(p1, candidates, largeur_max):
+def best_fit_pair(p1, candidates):
     best = None
-    best_waste = largeur_max
+    best_waste = LARG_UTILE
 
     for p2 in candidates:
-        for (L1, l1) in p1['dims']:
-            for (L2, l2) in p2['dims']:
-                if l1 + l2 <= largeur_max:
-                    waste = largeur_max - (l1 + l2)
+        if p2["Mat"] == "fer":
+            continue
+
+        for (L1, l1) in p1["dims"]:
+            for (L2, l2) in p2["dims"]:
+                if l1 + l2 <= LARG_UTILE:
+                    waste = LARG_UTILE - (l1 + l2)
                     if waste < best_waste:
                         best_waste = waste
                         best = (p2, L1, l1, L2, l2)
 
     return best
 
-
 # =========================
-# TRAITEMENT
+# TRAITEMENT PRINCIPAL
 # =========================
 if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
 
@@ -58,8 +60,8 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
                     refs = [r.strip() for r in str(row["Référence"]).split("/")]
                     for r in refs:
                         if len(r) > 3 and r in ligne:
-                            n = re.findall(r"\b\d+\b", ligne)
-                            qte = int(n[-1]) if n else 1
+                            nums = re.findall(r"\b\d+\b", ligne)
+                            qte = int(nums[-1]) if nums else 1
 
                             desc = str(row.get("Description", "")).lower()
                             if "fer" in desc:
@@ -105,10 +107,7 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
 
             while i < len(all_palettes):
                 p = all_palettes[i]
-                if (
-                    p["Ref"] == base["Ref"]
-                    and h + p["H"] <= H_UTILE
-                ):
+                if p["Ref"] == base["Ref"] and h + p["H"] <= H_UTILE:
                     h += p["H"]
                     refs.append(all_palettes.pop(i)["Ref"])
                 else:
@@ -132,15 +131,27 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
                 continue
 
             used[i] = True
+
+            # FER → toujours seul
+            if p1["Mat"] == "fer":
+                L1, l1 = min(p1["dims"], key=lambda x: x[1])
+                rangees.append({
+                    "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
+                    "D": None,
+                    "L_sol": L1
+                })
+                continue
+
             remaining = [
-                piles[j] for j in range(i + 1, len(piles)) if not used[j]
+                piles[j] for j in range(i + 1, len(piles))
+                if not used[j]
             ]
 
-            best = best_fit_pair(p1, remaining, LARG_UTILE)
+            best = best_fit_pair(p1, remaining)
 
             if best:
                 p2, L1, l1, L2, l2 = best
-                j = piles.index(p2)
+                j = next(k for k in range(len(piles)) if piles[k] is p2)
                 used[j] = True
 
                 rangees.append({
@@ -149,8 +160,8 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
                     "L_sol": max(L1, L2)
                 })
             else:
-                # pile seule
-                L1, l1 = max(p1["dims"], key=lambda x: x[1])
+                # pile seule → largeur MIN
+                L1, l1 = min(p1["dims"], key=lambda x: x[1])
                 rangees.append({
                     "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
                     "D": None,
@@ -175,15 +186,13 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
             curr_L += r["L_sol"]
 
             gauche = " / ".join(r["G"]["Refs"])
-            droite = (
-                " / ".join(r["D"]["Refs"]) if r["D"] else "VIDE"
-            )
+            droite = " / ".join(r["D"]["Refs"]) if r["D"] else "VIDE"
 
             st.write(
-                f"🚛 **Camion {cam_num}** | "
+                f"🚛 Camion {cam_num} | "
                 f"Section {r['L_sol']} mm | "
-                f"Gauche: {gauche} ({r['G']['l']} mm) | "
-                f"Droite: {droite}"
+                f"Gauche : {gauche} ({r['G']['l']} mm) | "
+                f"Droite : {droite}"
             )
 
     except Exception as e:
