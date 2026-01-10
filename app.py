@@ -119,54 +119,58 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
                 "Mat": base["Mat"]
             })
 
-        # =========================
-        # JUMELAGE BEST-FIT
-        # =========================
-        piles.sort(key=lambda p: max(d[0] for d in p["dims"]), reverse=True)
-        used = [False] * len(piles)
-        rangees = []
+      # =========================
+# JUMELAGE GLOBAL OPTIMAL
+# =========================
+rangees = []
+remaining = piles.copy()
 
-        for i, p1 in enumerate(piles):
-            if used[i]:
+while remaining:
+    best_pair = None
+    best_score = float("inf")
+
+    # Test de toutes les paires
+    for i in range(len(remaining)):
+        p1 = remaining[i]
+
+        # Pile seule (cas de repli)
+        for (L1, l1) in p1["dims"]:
+            score = L1 * 10 + l1  # pénalise la longueur
+            if score < best_score:
+                best_score = score
+                best_pair = (p1, None, L1, l1, None, None)
+
+        if p1["Mat"] == "fer":
+            continue
+
+        for j in range(i + 1, len(remaining)):
+            p2 = remaining[j]
+            if p2["Mat"] == "fer":
                 continue
 
-            used[i] = True
+            for (L1, l1) in p1["dims"]:
+                for (L2, l2) in p2["dims"]:
+                    if l1 + l2 <= LARG_UTILE:
+                        L_sol = max(L1, L2)
+                        waste = LARG_UTILE - (l1 + l2)
+                        score = L_sol * 10 + waste
 
-            # FER → toujours seul
-            if p1["Mat"] == "fer":
-                L1, l1 = min(p1["dims"], key=lambda x: x[1])
-                rangees.append({
-                    "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
-                    "D": None,
-                    "L_sol": L1
-                })
-                continue
+                        if score < best_score:
+                            best_score = score
+                            best_pair = (p1, p2, L1, l1, L2, l2)
 
-            remaining = [
-                piles[j] for j in range(i + 1, len(piles))
-                if not used[j]
-            ]
+    # Placement de la meilleure section
+    p1, p2, L1, l1, L2, l2 = best_pair
 
-            best = best_fit_pair(p1, remaining)
+    rangees.append({
+        "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
+        "D": {"Refs": p2["Refs"], "L": L2, "l": l2} if p2 else None,
+        "L_sol": max(L1, L2)
+    })
 
-            if best:
-                p2, L1, l1, L2, l2 = best
-                j = next(k for k in range(len(piles)) if piles[k] is p2)
-                used[j] = True
-
-                rangees.append({
-                    "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
-                    "D": {"Refs": p2["Refs"], "L": L2, "l": l2},
-                    "L_sol": max(L1, L2)
-                })
-            else:
-                # pile seule → largeur MIN
-                L1, l1 = min(p1["dims"], key=lambda x: x[1])
-                rangees.append({
-                    "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
-                    "D": None,
-                    "L_sol": L1
-                })
+    remaining.remove(p1)
+    if p2:
+        remaining.remove(p2)
 
         # =========================
         # AFFICHAGE
