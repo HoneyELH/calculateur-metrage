@@ -3,8 +3,8 @@ import pandas as pd
 import pdfplumber
 import re
 
-st.set_page_config(page_title="Hako-Toro : 17m Opti", layout="wide")
-st.title("🚚 Planification Haute Densité (17m)")
+st.set_page_config(page_title="Hako-Toro : 17m Fix", layout="wide")
+st.title("🚚 Plan de Chargement (Optimisation Côte à Côte)")
 
 # --- CONFIGURATION CAMION ---
 L_UTILE = 13600  #
@@ -18,7 +18,7 @@ if uploaded_excel and uploaded_pdfs:
     try:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         
-        if st.button("🚀 CALCULER L'OPTIMISATION"):
+        if st.button("🚀 GÉNÉRER LE PLAN 17M"):
             all_palettes = []
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
@@ -42,9 +42,9 @@ if uploaded_excel and uploaded_pdfs:
                                         })
                                     break
 
-            # 1. GERBAGE (Règles Bois/Carton)
+            # 1. FORMATION DES PILES (Vertical)
             piles = []
-            # Cartons : Mélangeable + Pyramide
+            # Cartons
             cartons = sorted([p for p in all_palettes if p['Mat'] == 'carton'], key=lambda x: x['l'], reverse=True)
             while cartons:
                 base = cartons.pop(0)
@@ -55,8 +55,7 @@ if uploaded_excel and uploaded_pdfs:
                         h += cartons[i]['H']; refs.append(cartons.pop(i)['Ref'])
                     else: i += 1
                 piles.append({"Refs": refs, "L": base['L'], "l": base['l'], "Mat": "carton"})
-
-            # Bois (Même dimensions uniquement)
+            # Bois (Même dimensions)
             bois = [p for p in all_palettes if p['Mat'] == 'bois']
             for dk in set(p['Dim'] for p in bois):
                 grp = [p for p in bois if p['Dim'] == dk]
@@ -69,52 +68,54 @@ if uploaded_excel and uploaded_pdfs:
                             h += grp[i]['H']; refs.append(grp.pop(i)['Ref'])
                         else: i += 1
                     piles.append({"Refs": refs, "L": base['L'], "l": base['l'], "Mat": "bois"})
-
-            # Fer (Seul)
+            # Fer
             for p in [p for p in all_palettes if p['Mat'] == 'fer']:
                 piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l'], "Mat": "fer"})
 
-            # 2. ALGORITHME DE JUMELAGE (KEY TO 17M)
-            # On trie par Longueur pour traiter les plus encombrants d'abord
+            # 2. JUMELAGE RÉEL (Horizontal)
             piles = sorted(piles, key=lambda x: x['L'], reverse=True)
-            plan_final = []
-            
-            while piles:
-                p1 = piles.pop(0)
-                pair_found = False
-                # On cherche une autre pile p2 qui peut tenir à côté de p1 en largeur
-                for i in range(len(piles)):
-                    if (p1['l'] + piles[i]['l']) <= LARG_UTILE: # Test pur sur 2460mm
-                        p2 = piles.pop(i)
-                        plan_final.append({"p1": p1, "p2": p2, "long_sol": max(p1['L'], p2['L'])})
-                        pair_found = True
-                        break
-                if not pair_found:
-                    plan_final.append({"p1": p1, "p2": None, "long_sol": p1['L']})
+            rangées = []
+            utilisés = [False] * len(piles)
 
-            # 3. AFFICHAGE
-            total_metrage_mm = sum(item['long_sol'] for item in plan_final)
-            st.divider()
-            st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_metrage_mm / 1000:.2f} m")
-            
-            # Répartition camions
-            current_camion_m = 0
-            camion_num = 1
-            st.subheader(f"🚛 CAMION N°{camion_num}")
-            
-            for item in plan_final:
-                if (current_camion_m + item['long_sol']) > L_UTILE:
-                    camion_num += 1
-                    current_camion_m = item['long_sol']
-                    st.divider()
-                    st.subheader(f"🚛 CAMION N°{camion_num}")
-                else:
-                    current_camion_m += item['long_sol']
+            for i in range(len(piles)):
+                if utilisés[i]: continue
+                p1 = piles[i]
+                utilisés[i] = True
+                paire_trouvée = None
                 
-                txt = f"L: {item['long_sol']}mm | Gauche: {' / '.join(item['p1']['Refs'])}"
-                if item['p2']:
-                    txt += f" | Droite: {' / '.join(item['p2']['Refs'])}"
-                st.write(txt)
+                # Chercher une pile pour mettre à côté
+                for j in range(i + 1, len(piles)):
+                    if not utilisés[j] and (p1['l'] + piles[j]['l']) <= LARG_UTILE:
+                        paire_trouvée = piles[j]
+                        utilisés[j] = True
+                        break
+                
+                rangées.append({
+                    "G": p1, 
+                    "D": paire_trouvée, 
+                    "L_sol": max(p1['L'], paire_trouvée['L']) if paire_trouvée else p1['L']
+                })
+
+            # 3. RÉPARTITION CAMIONS
+            total_metrage = sum(r['L_sol'] for r in rangées)
+            st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_metrage / 1000:.2f} m")
+
+            current_L = 0
+            cam_num = 1
+            for r in rangées:
+                if current_L + r['L_sol'] > L_UTILE:
+                    cam_num += 1
+                    current_L = r['L_sol']
+                else:
+                    current_L += r['L_sol']
+                
+                with st.expander(f"🚛 CAMION N°{cam_num} | Section de {r['L_sol']} mm"):
+                    col_g, col_d = st.columns(2)
+                    col_g.markdown(f"**GAUCHE** : {' / '.join(r['G']['Refs'])} ({r['G']['l']}mm)")
+                    if r['D']:
+                        col_d.markdown(f"**DROITE** : {' / '.join(r['D']['Refs'])} ({r['D']['l']}mm)")
+                    else:
+                        col_d.write("VIDE")
 
     except Exception as e:
         st.error(f"Erreur : {e}")
