@@ -4,13 +4,14 @@ import pdfplumber
 import re
 import math
 
-st.set_page_config(page_title="Hako-Toro : 17m Garanti", layout="wide")
-st.title("🚚 Optimisation de Chargement (Objectif 17m)")
+st.set_page_config(page_title="Hako-Toro : 17m Final", layout="wide")
+st.title("🚚 Planificateur de Chargement (Dimensions Réelles)")
 
-# --- PARAMÈTRES TECHNIQUES ---
-L_UTILE = 13600 
-H_UTILE = 2600  
-SEUIL_DOUBLE = 1230 # Seuil pour doubler en largeur
+# --- CONFIGURATION DONNÉE ---
+L_UTILE = 13600  #
+LARG_UTILE = 2460 #
+H_UTILE = 2600   # Hauteur ajustée à 2.60m
+SEUIL_LARG = LARG_UTILE / 2 # Soit 1230mm
 
 uploaded_excel = st.sidebar.file_uploader("1. Base Excel", type=None)
 uploaded_pdfs = st.file_uploader("2. Charger les PDF", type="pdf", accept_multiple_files=True)
@@ -19,7 +20,7 @@ if uploaded_excel and uploaded_pdfs:
     try:
         df_articles = pd.read_excel(uploaded_excel, sheet_name='Palettes')
         
-        if st.button("🚀 GÉNÉRER LE PLAN FINAL"):
+        if st.button("🚀 CALCULER LE PLAN À 17M"):
             all_palettes = []
             for pdf_file in uploaded_pdfs:
                 with pdfplumber.open(pdf_file) as pdf:
@@ -35,11 +36,10 @@ if uploaded_excel and uploaded_pdfs:
                                     desc = str(row.get('Description', '')).lower()
                                     matiere = 'fer' if 'fer' in desc else 'carton' if 'carton' in desc else 'bois' if 'bois' in desc else 'inconnu'
 
-                                    # AJUSTEMENT LOGIQUE : On prend la plus petite dimension comme "Largeur" pour favoriser le doublage
-                                    dim1 = float(row['Longueur (mm)'])
-                                    dim2 = float(row['Largeur (mm)'])
-                                    longueur = max(dim1, dim2)
-                                    largeur = min(dim1, dim2)
+                                    # LOGIQUE DE ROTATION : La plus grande dimension devient la longueur (L)
+                                    # La plus petite devient la largeur (l) pour tenir à deux de front
+                                    d1, d2 = float(row['Longueur (mm)']), float(row['Largeur (mm)'])
+                                    longueur, largeur = max(d1, d2), min(d1, d2)
 
                                     for _ in range(qte):
                                         all_palettes.append({
@@ -49,7 +49,7 @@ if uploaded_excel and uploaded_pdfs:
                                     break
 
             piles = []
-            # 1. CARTONS (Mélange + Pyramide)
+            # 1. CARTONS (Mélange autorisé + Pyramide)
             cartons = sorted([p for p in all_palettes if p['Mat'] == 'carton'], key=lambda x: x['l'], reverse=True)
             while cartons:
                 base = cartons.pop(0)
@@ -62,7 +62,7 @@ if uploaded_excel and uploaded_pdfs:
                     else: i += 1
                 piles.append({"Refs": p_refs, "L": base['L'], "l": base['l'], "Mat": "carton"})
 
-            # 2. BOIS (Mêmes dimensions)
+            # 2. BOIS (Mêmes dimensions uniquement)
             bois_all = [p for p in all_palettes if p['Mat'] == 'bois']
             for d_key in set(p['Dim_Key'] for p in bois_all):
                 groupe = [p for p in bois_all if p['Dim_Key'] == d_key]
@@ -81,19 +81,16 @@ if uploaded_excel and uploaded_pdfs:
             for p in [p for p in all_palettes if p['Mat'] == 'fer']:
                 piles.append({"Refs": [p['Ref']], "L": p['L'], "l": p['l'], "Mat": "fer"})
 
-            # CALCUL RÉEL DU MÉTRAGE
-            total_mm = 0
-            for p in piles:
-                if p['l'] > SEUIL_DOUBLE: total_mm += p['L']
-                else: total_mm += (p['L'] / 2)
+            # CALCUL MÉTRAGE (Divise par 2 si largeur <= 1230mm)
+            total_mm = sum([p['L'] if p['l'] > SEUIL_LARG else p['L']/2 for p in piles])
 
             st.divider()
             st.metric("📏 MÉTRAGE LINÉAIRE TOTAL", f"{total_mm / 1000:.2f} m")
-
+            
             # Répartition par Camion
             camions, c_actuel = [], {"libre": L_UTILE, "piles": []}
             for p in piles:
-                lg_sol = p['L'] if p['l'] > SEUIL_DOUBLE else p['L']/2
+                lg_sol = p['L'] if p['l'] > SEUIL_LARG else p['L']/2
                 if lg_sol <= c_actuel["libre"]:
                     c_actuel["piles"].append(p)
                     c_actuel["libre"] -= lg_sol
@@ -103,8 +100,8 @@ if uploaded_excel and uploaded_pdfs:
             camions.append(c_actuel)
 
             for idx, c in enumerate(camions, 1):
-                with st.expander(f"🚛 CAMION N°{idx} - {(L_UTILE-c['libre'])/1000:.2f} m", expanded=True):
-                    st.table([{"Pile": " / ".join(p['Refs']), "Matériau": p['Mat'], "Largeur au sol": f"{p['l']} mm"} for p in c['piles']])
-
+                occ = (L_UTILE - c['libre']) / 1000
+                with st.expander(f"🚛 CAMION N°{idx} - {occ:.2f} m", expanded=True):
+                    st.table([{"Pile": " / ".join(p['Refs']), "Matériau": p['Mat'], "Larg. Sol": f"{p['l']} mm"} for p in c['piles']])
     except Exception as e:
         st.error(f"Erreur : {e}")
