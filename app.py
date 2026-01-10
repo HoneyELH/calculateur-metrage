@@ -6,9 +6,9 @@ import re
 # =========================
 # CONFIGURATION CAMION
 # =========================
-L_UTILE = 13600     # mm
-LARG_UTILE = 2460  # mm
-H_UTILE = 2600     # mm
+L_UTILE = 13600
+LARG_UTILE = 2460
+H_UTILE = 2600
 
 st.set_page_config(page_title="Hako-Toro : 17m Final", layout="wide")
 st.title("🚚 Planification Optimisée 17m")
@@ -16,9 +16,6 @@ st.title("🚚 Planification Optimisée 17m")
 uploaded_excel = st.sidebar.file_uploader("1️⃣ Base Excel", type=["xlsx"])
 uploaded_pdfs = st.sidebar.file_uploader("2️⃣ Bons PDF", type="pdf", accept_multiple_files=True)
 
-# =========================
-# TRAITEMENT PRINCIPAL
-# =========================
 if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
 
     try:
@@ -74,7 +71,6 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
         while all_palettes:
             base = all_palettes.pop(0)
 
-            # FER → pile seule
             if base["Mat"] == "fer":
                 piles.append({
                     "Refs": [base["Ref"]],
@@ -114,17 +110,25 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
             for i in range(len(remaining)):
                 p1 = remaining[i]
 
-                # ---- PILE SEULE (repli)
+                # --- PILE SEULE
                 for (L1, l1) in p1["dims"]:
                     score = L1 * 10 + l1
                     if score < best_score:
                         best_score = score
-                        best = (p1, None, L1, l1, None, None)
+                        best = {
+                            "p1": p1,
+                            "p2": None,
+                            "L1": L1,
+                            "l1": l1,
+                            "L2": 0,
+                            "l2": 0,
+                            "L_sol": L1
+                        }
 
                 if p1["Mat"] == "fer":
                     continue
 
-                # ---- TEST DES PAIRES
+                # --- JUMELAGE
                 for j in range(i + 1, len(remaining)):
                     p2 = remaining[j]
                     if p2["Mat"] == "fer":
@@ -139,20 +143,26 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 GÉNÉRER LE PLAN 17M"):
 
                                 if score < best_score:
                                     best_score = score
-                                    best = (p1, p2, L1, l1, L2, l2)
+                                    best = {
+                                        "p1": p1,
+                                        "p2": p2,
+                                        "L1": L1,
+                                        "l1": l1,
+                                        "L2": L2,
+                                        "l2": l2,
+                                        "L_sol": L_sol
+                                    }
 
-            # ---- PLACEMENT DE LA MEILLEURE SECTION
-            p1, p2, L1, l1, L2, l2 = best
-
+            # --- PLACEMENT
             rangees.append({
-                "G": {"Refs": p1["Refs"], "L": L1, "l": l1},
-                "D": {"Refs": p2["Refs"], "L": L2, "l": l2} if p2 else None,
-                "L_sol": max(L1, L2)
+                "G": {"Refs": best["p1"]["Refs"], "L": best["L1"], "l": best["l1"]},
+                "D": {"Refs": best["p2"]["Refs"], "L": best["L2"], "l": best["l2"]} if best["p2"] else None,
+                "L_sol": best["L_sol"]
             })
 
-            remaining.remove(p1)
-            if p2:
-                remaining.remove(p2)
+            remaining.remove(best["p1"])
+            if best["p2"]:
+                remaining.remove(best["p2"])
 
         # =========================
         # AFFICHAGE
