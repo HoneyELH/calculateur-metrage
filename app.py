@@ -66,12 +66,6 @@ def extraire_commandes(df_refs: pd.DataFrame, uploaded_pdfs) -> pd.DataFrame:
     return pd.DataFrame(lignes_cmd)
 
 def construire_piles(df_full: pd.DataFrame):
-    """
-    Transforme les quantités en piles verticales en respectant :
-    - empilable ou non
-    - hauteur max camion
-    - matière (fer = jamais empilé)
-    """
     piles = []
     pile_id = 0
 
@@ -84,7 +78,6 @@ def construire_piles(df_full: pd.DataFrame):
         empilable = bool(art["Empilable"])
         mat = art["Matiere"]
 
-        # Cas non empilable ou fer : 1 palette = 1 pile
         if (not empilable) or mat == "fer":
             for _ in range(qte):
                 pile_id += 1
@@ -97,7 +90,6 @@ def construire_piles(df_full: pd.DataFrame):
                     "H": h
                 })
         else:
-            # Empilable : on empile jusqu'à H_UTILE
             reste = qte
             while reste > 0:
                 h_courant = 0
@@ -119,26 +111,16 @@ def construire_piles(df_full: pd.DataFrame):
     return piles
 
 def calcul_metrage_par_surface(piles, largeur_camion=LARG_UTILE) -> float:
-    """
-    Calcule le métrage linéaire équivalent comme le ferait un humain :
-    - on prend la surface au sol totale des piles
-    - on divise par la largeur utile du camion
-    """
     surface_totale_mm2 = 0
     for p in piles:
-        # On autorise la meilleure orientation : on choisit la plus petite dimension en largeur
         orientations = [(p["L"], p["l"]), (p["l"], p["L"])]
-        Lp, lp = min(orientations, key=lambda x: x[1])  # lp = largeur, Lp = longueur
+        Lp, lp = min(orientations, key=lambda x: x[1])
         surface_totale_mm2 += Lp * lp
 
     longueur_equiv_mm = surface_totale_mm2 / largeur_camion
-    return longueur_equiv_mm / 1000.0  # en mètres
+    return longueur_equiv_mm / 1000.0
 
 def construire_rangees(piles):
-    """
-    Heuristique pour proposer un plan de chargement lisible :
-    rangées gauche/droite, sans chercher l’optimal mathématique.
-    """
     rangees = []
     restantes = piles.copy()
     restantes.sort(key=lambda p: max(p["L"], p["l"]), reverse=True)
@@ -177,14 +159,6 @@ def construire_rangees(piles):
     return rangees
 
 def detail_palettes(rangees):
-    """
-    Donne pour chaque palette :
-    - Camion
-    - Rangée
-    - Côté
-    - Niveau dans la pile
-    - Référence
-    """
     lignes = []
     curr_L = 0
     cam_num = 1
@@ -215,37 +189,30 @@ def detail_palettes(rangees):
                 })
     return pd.DataFrame(lignes)
 
-# ---------- LOGIQUE STREAMLIT ----------
+# ---------- STREAMLIT ----------
 
 if uploaded_excel and uploaded_pdfs and st.button("🚀 LANCER L’OPTIMISATION"):
 
     try:
-        # 1) Base articles
         df_articles = pd.read_excel(uploaded_excel, sheet_name="Palettes")
         df_refs = construire_base_articles(df_articles)
-
-        # 2) Commandes depuis les PDF
         df_cmd = extraire_commandes(df_refs, uploaded_pdfs)
 
         if df_cmd.empty:
-            st.warning("Aucune référence trouvée dans les PDF avec la base Excel fournie.")
+            st.warning("Aucune référence trouvée dans les PDF.")
         else:
             df_full = df_cmd.merge(df_refs, on="Ref", how="left")
 
-            # 3) Piles verticales
             piles = construire_piles(df_full)
 
-            # 4) Métrage linéaire équivalent (surface / largeur camion)
+            # MÉTRAGE EXACT
             metrage_m = calcul_metrage_par_surface(piles)
-            st.subheader(f"📏 Métrage linéaire équivalent : **{metrage_m:.2f} m**")
+            st.subheader(f"📏 MÉTRAGE EXACT (méthode humaine) : **{metrage_m:.2f} m**")
 
-            # 5) Plan de chargement (rangées) pour donner une idée visuelle
+            # PLAN VISUEL
             rangees = construire_rangees(piles)
-            total_mm_rangees = sum(r["L_sol"] for r in rangees)
-
-            st.write(f"(Info) Métrage par somme des rangées : {total_mm_rangees/1000:.2f} m")
-
             st.subheader("🧱 Plan de chargement (rangées / camions)")
+
             curr_L = 0
             cam_num = 1
             for r in rangees:
@@ -261,8 +228,7 @@ if uploaded_excel and uploaded_pdfs and st.button("🚀 LANCER L’OPTIMISATION"
                     f"Gauche : {g} | Droite : {d}"
                 )
 
-            # 6) Détail palette par palette (niveau, côté, camion)
-            st.subheader("📋 Détail par palette (camion / rangée / côté / niveau)")
+            st.subheader("📋 Détail palette par palette")
             df_detail = detail_palettes(rangees)
             st.dataframe(df_detail.sort_values(["Camion", "Rangee", "Cote", "PileID", "Niveau"]))
 
