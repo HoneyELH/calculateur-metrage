@@ -11,38 +11,50 @@ LARG_UTILE = 2460 # mm
 H_UTILE = 2700    # mm
 
 # =========================
-# INTERFACE PREMIUM
+# INTERFACE HAKO/TORO PRO
 # =========================
-st.set_page_config(page_title="Chargement Premium", layout="wide")
+st.set_page_config(page_title="Chargement Hako/Toro", layout="wide")
 
 st.markdown("""
 <style>
+    body {
+        background-color: #F2F2F2;
+    }
     .title {
-        font-size: 40px;
+        font-size: 42px;
         font-weight: 900;
         text-align: center;
-        color: #222;
+        color: #D7263D;
         margin-bottom: 30px;
     }
     .card {
         padding: 20px;
-        border-radius: 12px;
+        border-radius: 14px;
         background: white;
         border: 1px solid #ddd;
+        box-shadow: 0px 2px 6px rgba(0,0,0,0.08);
         margin-bottom: 20px;
     }
     .metric {
-        font-size: 28px;
-        font-weight: 700;
+        font-size: 32px;
+        font-weight: 800;
+        color: #1A1A1A;
     }
     .sub {
-        font-size: 16px;
+        font-size: 15px;
         color: #666;
+    }
+    .section-title {
+        font-size: 26px;
+        font-weight: 800;
+        color: #D7263D;
+        margin-top: 30px;
+        margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<div class='title'>🚚 Chargement Camion — Interface Premium</div>", unsafe_allow_html=True)
+st.markdown("<div class='title'>🚚 Chargement Camion — Hako/Toro Pro</div>", unsafe_allow_html=True)
 
 # =========================
 # SIDEBAR
@@ -259,7 +271,7 @@ if uploaded_excel and uploaded_pdfs and st.button("Analyser"):
         # =========================
         # PLAN DE CHARGEMENT
         # =========================
-        st.markdown("<div class='card'><h3>🧱 Plan de chargement</h3></div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>🧱 Plan de chargement</div>", unsafe_allow_html=True)
 
         curr_L = 0
         cam_num = 1
@@ -273,11 +285,11 @@ if uploaded_excel and uploaded_pdfs and st.button("Analyser"):
             g = " / ".join(r["G"][0]["Refs"])
             d = " / ".join(r["D"][0]["Refs"]) if r["D"] else "VIDE"
 
-            st.write(f"Camion {cam_num} | Profondeur : {r['L_sol']} mm | Gauche : {g} | Droite : {d}")
+            st.markdown(f"<div class='card'>Camion {cam_num} | Profondeur : {r['L_sol']} mm<br>Gauche : {g}<br>Droite : {d}</div>", unsafe_allow_html=True)
 
         # =========================
         # TABLEAU DÉTAILLÉ
         # =========================
-        st.markdown("<div class='card'><h3>📋 Détail palette par palette</h3></div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>📋 Détail palette par palette</div>", unsafe_allow_html=True)
         df_detail = detail_palettes(rangees)
         st.dataframe(df_detail.sort_values(["Camion", "Rangee", "Cote", "PileID", "Niveau"]))
