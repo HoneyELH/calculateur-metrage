@@ -10,13 +10,50 @@ L_UTILE = 13600   # mm
 LARG_UTILE = 2460 # mm
 H_UTILE = 2700    # mm
 
-st.set_page_config(page_title="Chargement camion optimisé", layout="wide")
-st.title("🚚 Optimisation de chargement")
+# =========================
+# INTERFACE PREMIUM
+# =========================
+st.set_page_config(page_title="Chargement Premium", layout="wide")
 
-uploaded_excel = st.sidebar.file_uploader("1️⃣ Base articles (Excel)", type=["xlsx"])
-uploaded_pdfs = st.sidebar.file_uploader("2️⃣ Bons de préparation (PDF)", type="pdf", accept_multiple_files=True)
+st.markdown("""
+<style>
+    .title {
+        font-size: 40px;
+        font-weight: 900;
+        text-align: center;
+        color: #222;
+        margin-bottom: 30px;
+    }
+    .card {
+        padding: 20px;
+        border-radius: 12px;
+        background: white;
+        border: 1px solid #ddd;
+        margin-bottom: 20px;
+    }
+    .metric {
+        font-size: 28px;
+        font-weight: 700;
+    }
+    .sub {
+        font-size: 16px;
+        color: #666;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# ---------- FONCTIONS MÉTIER ----------
+st.markdown("<div class='title'>🚚 Chargement Camion — Interface Premium</div>", unsafe_allow_html=True)
+
+# =========================
+# SIDEBAR
+# =========================
+st.sidebar.header("📥 Import des fichiers")
+uploaded_excel = st.sidebar.file_uploader("Base articles (Excel)", type=["xlsx"])
+uploaded_pdfs = st.sidebar.file_uploader("Bons PDF", type=["pdf"], accept_multiple_files=True)
+
+# =========================
+# FONCTIONS MÉTIER
+# =========================
 
 def detect_matiere(desc: str) -> str:
     d = desc.lower()
@@ -189,48 +226,58 @@ def detail_palettes(rangees):
                 })
     return pd.DataFrame(lignes)
 
-# ---------- STREAMLIT ----------
+# =========================
+# MAIN LOGIC
+# =========================
 
-if uploaded_excel and uploaded_pdfs and st.button("🚀 LANCER L’OPTIMISATION"):
+if uploaded_excel and uploaded_pdfs and st.button("Analyser"):
 
-    try:
-        df_articles = pd.read_excel(uploaded_excel, sheet_name="Palettes")
-        df_refs = construire_base_articles(df_articles)
-        df_cmd = extraire_commandes(df_refs, uploaded_pdfs)
+    df_articles = pd.read_excel(uploaded_excel, sheet_name="Palettes")
+    df_refs = construire_base_articles(df_articles)
+    df_cmd = extraire_commandes(df_refs, uploaded_pdfs)
 
-        if df_cmd.empty:
-            st.warning("Aucune référence trouvée dans les PDF.")
-        else:
-            df_full = df_cmd.merge(df_refs, on="Ref", how="left")
+    if df_cmd.empty:
+        st.error("Aucune référence trouvée dans les PDF.")
+    else:
+        df_full = df_cmd.merge(df_refs, on="Ref", how="left")
 
-            piles = construire_piles(df_full)
+        piles = construire_piles(df_full)
+        metrage = calcul_metrage_par_surface(piles)
+        rangees = construire_rangees(piles)
 
-            # MÉTRAGE EXACT
-            metrage_m = calcul_metrage_par_surface(piles)
-            st.subheader(f"📏 MÉTRAGE EXACT (méthode humaine) : **{metrage_m:.2f} m**")
+        # =========================
+        # DASHBOARD
+        # =========================
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"<div class='card'><div class='metric'>{metrage:.2f} m</div><div class='sub'>Métrage réel</div></div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"<div class='card'><div class='metric'>{len(piles)}</div><div class='sub'>Piles créées</div></div>", unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"<div class='card'><div class='metric'>{len(rangees)}</div><div class='sub'>Rangées</div></div>", unsafe_allow_html=True)
 
-            # PLAN VISUEL
-            rangees = construire_rangees(piles)
-            st.subheader("🧱 Plan de chargement (rangées / camions)")
+        # =========================
+        # PLAN DE CHARGEMENT
+        # =========================
+        st.markdown("<div class='card'><h3>🧱 Plan de chargement</h3></div>", unsafe_allow_html=True)
 
-            curr_L = 0
-            cam_num = 1
-            for r in rangees:
-                if curr_L + r["L_sol"] > L_UTILE:
-                    st.markdown(f"---\n**🚛 Camion {cam_num+1}**")
-                    cam_num += 1
-                    curr_L = 0
-                curr_L += r["L_sol"]
-                g = " / ".join(r["G"][0]["Refs"])
-                d = " / ".join(r["D"][0]["Refs"]) if r["D"] else "VIDE"
-                st.write(
-                    f"Camion {cam_num} | Profondeur rangée : {r['L_sol']} mm | "
-                    f"Gauche : {g} | Droite : {d}"
-                )
+        curr_L = 0
+        cam_num = 1
+        for r in rangees:
+            if curr_L + r["L_sol"] > L_UTILE:
+                st.markdown(f"<div class='card'><h4>🚛 Camion {cam_num+1}</h4></div>", unsafe_allow_html=True)
+                cam_num += 1
+                curr_L = 0
+            curr_L += r["L_sol"]
 
-            st.subheader("📋 Détail palette par palette")
-            df_detail = detail_palettes(rangees)
-            st.dataframe(df_detail.sort_values(["Camion", "Rangee", "Cote", "PileID", "Niveau"]))
+            g = " / ".join(r["G"][0]["Refs"])
+            d = " / ".join(r["D"][0]["Refs"]) if r["D"] else "VIDE"
 
-    except Exception as e:
-        st.error(f"❌ Erreur : {e}")
+            st.write(f"Camion {cam_num} | Profondeur : {r['L_sol']} mm | Gauche : {g} | Droite : {d}")
+
+        # =========================
+        # TABLEAU DÉTAILLÉ
+        # =========================
+        st.markdown("<div class='card'><h3>📋 Détail palette par palette</h3></div>", unsafe_allow_html=True)
+        df_detail = detail_palettes(rangees)
+        st.dataframe(df_detail.sort_values(["Camion", "Rangee", "Cote", "PileID", "Niveau"]))
