@@ -11,7 +11,7 @@ LARG_UTILE = 2460 # mm
 H_UTILE = 2700    # mm
 
 st.set_page_config(page_title="Chargement camion optimisé", layout="wide")
-st.title("🚚 Optimisation de chargement (Hako / Toro)")
+st.title("🚚 Optimisation de chargement")
 
 uploaded_excel = st.sidebar.file_uploader("1️⃣ Base articles (Excel)", type=["xlsx"])
 uploaded_pdfs = st.sidebar.file_uploader("2️⃣ Bons de préparation (PDF)", type="pdf", accept_multiple_files=True)
