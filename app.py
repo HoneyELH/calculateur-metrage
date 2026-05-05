@@ -413,30 +413,17 @@ def optimiser_rangees(piles: list[dict]) -> list[dict]:
 
 def repartir_camions(rangees: list[dict]) -> list[dict]:
     """
-    Répartit les rangées entre camions en respectant L_UTILE et POIDS_MAX.
-    Retourne une liste de { camion: int, rangees: [...], longueur: float, poids: float }
+    Répartit les rangées entre camions en respectant L_UTILE.
     """
     camions = []
-    camion_actuel = {"num": 1, "rangees": [], "longueur": 0, "poids": 0}
+    camion_actuel = {"num": 1, "rangees": [], "longueur": 0}
 
     for r in rangees:
         prof = r["profondeur"] + JEU_SEQ
-        poids_r = sum(
-            p["Poids_kg"] if hasattr(p, "get") else p["Poids_kg"]
-            for slot in [r["gauche"], r["droite"]] if slot
-            for p in [slot[0]]
-        )
-        # poids réel depuis les piles
-        poids_r = 0
-        for slot in [r["gauche"], r["droite"]]:
-            if slot:
-                pile = slot[0]
-                # poids = nb_niveaux * poids_unitaire (non stocké, approximation)
-                poids_r += pile.get("poids_total", 0)
 
-        if camion_actuel["longueur"] + prof > L_UTILE:
+        if camion_actuel["longueur"] + prof > L_UTILE and camion_actuel["rangees"]:
             camions.append(camion_actuel)
-            camion_actuel = {"num": camion_actuel["num"] + 1, "rangees": [], "longueur": 0, "poids": 0}
+            camion_actuel = {"num": camion_actuel["num"] + 1, "rangees": [], "longueur": 0}
 
         camion_actuel["rangees"].append(r)
         camion_actuel["longueur"] += prof
